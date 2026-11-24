@@ -8,6 +8,7 @@ from urllib.parse import quote
 import pytest
 from fastapi.testclient import TestClient
 from helpers import lock_entry, write_lockfile, write_skill
+from skilldesk import SCHEMA_VERSION
 from skilldesk import index as index_mod
 from skilldesk.config import Config
 from skilldesk.health import detect
@@ -46,7 +47,7 @@ def test_health(client: TestClient) -> None:
     assert payload["ok"] is True
     assert payload["counts"]["skills"] == 2
     assert payload["counts"]["dangling"] == 1
-    assert payload["meta"]["schema"] == "1"
+    assert payload["meta"]["schema"] == str(SCHEMA_VERSION)
 
 
 def test_index_and_filters(client: TestClient) -> None:

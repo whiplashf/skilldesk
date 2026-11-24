@@ -46,7 +46,7 @@ export function TrackingPage({ health, onRetryHealth, onOpenSkill }: TrackingPag
     <div className="page">
       <PageHeader
         title="跟踪 · 安装健康"
-        sub="本机副本的结构性问题：悬空软链、缺失来源、重复实体。上游漂移（drift）检测在 M4 到来，本页只覆盖安装健康。"
+        sub="查看本机的悬空软链、待确认来源和重复实体。GitHub 版本可在技能详情中检查。"
         aside={
           <button type="button" className="button button--ghost" onClick={refresh}>
             刷新
@@ -111,7 +111,7 @@ export function TrackingPage({ health, onRetryHealth, onOpenSkill }: TrackingPag
                           <span className="issue-detail">{issue.detail}</span>
                           <span className="issue-target mono">{issue.target}</span>
                           {issue.fixable ? (
-                            <span className="chip chip--warn" title="M1 只读，暂不提供修复动作">
+                            <span className="chip chip--warn" title="可在宿主应用中处理">
                               可修复
                             </span>
                           ) : null}
@@ -146,7 +146,7 @@ export function TrackingPage({ health, onRetryHealth, onOpenSkill }: TrackingPag
             );
           })}
           {truncated ? <p className="page-note">问题总数超过 500 条，列表只显示前 500 条。</p> : null}
-          <p className="page-note">健康问题在 M1 只读展示；批量修复与认领动作随可写里程碑开放。</p>
+          <p className="page-note">打开待确认来源的条目，可关联 GitHub 仓库或标记为我写的。</p>
         </div>
       ) : null}
     </div>

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import html
 import re
+from urllib.parse import urlsplit
 
 HEAD_RE = re.compile(r"^(#{1,6})\s+(.*)$")
 FENCE_RE = re.compile(r"^(\s*)(`{3,}|~{3,})\s*([\w#+-]*)\s*$")
@@ -22,34 +23,39 @@ def esc(value: str) -> str:
 
 
 def safe_url(url: str) -> bool:
-    return not re.match(r"(?i)^\s*(javascript|data|vbscript):", url)
+    if not url or url.startswith("//") or "\\" in url or any(ord(ch) < 32 for ch in url):
+        return False
+    try:
+        return urlsplit(url).scheme.lower() in {"", "http", "https", "mailto"}
+    except ValueError:
+        return False
+
+
+_INLINE = re.compile(r'\x60([^\x60\n]+)\x60|(!?)\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)')
+
+
+def _emphasis(text: str) -> str:
+    text = re.sub(r"\*\*([^*\n]+)\*\*", r"<strong>\1</strong>", esc(text))
+    return re.sub(r"(?<![\w*])\*([^*\n]+)\*(?![\w*])", r"<em>\1</em>", text)
 
 
 def inline(text: str) -> str:
-    text = esc(text)
-    codes: list[str] = []
-
-    def keep_code(match: re.Match) -> str:
-        codes.append(match.group(1))
-        return f"\x00{len(codes) - 1}\x00"
-
-    text = re.sub(r"`([^`\n]+)`", keep_code, text)
-    text = re.sub(
-        r"!\[([^\]]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)",
-        lambda m: f'<img alt="{m.group(1)}" src="{m.group(2)}">' if safe_url(m.group(2)) else m.group(0),
-        text,
-    )
-    text = re.sub(
-        r"\[([^\]]+)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)",
-        lambda m: f'<a href="{m.group(2)}" target="_blank" rel="noreferrer">{m.group(1)}</a>'
-        if safe_url(m.group(2))
-        else m.group(0),
-        text,
-    )
-    text = re.sub(r"\*\*([^*\n]+)\*\*", r"<strong>\1</strong>", text)
-    text = re.sub(r"(?<![\w*])\*([^*\n]+)\*(?![\w*])", r"<em>\1</em>", text)
-    text = re.sub(r"\x00(\d+)\x00", lambda m: f"<code>{codes[int(m.group(1))]}</code>", text)
-    return text
+    parts: list[str] = []
+    start = 0
+    for match in _INLINE.finditer(text):
+        parts.append(_emphasis(text[start:match.start()]))
+        code, image, label, url = match.groups()
+        if code is not None:
+            parts.append(f"<code>{esc(code)}</code>")
+        elif not safe_url(url):
+            parts.append(esc(label))
+        elif image:
+            parts.append(f'<img alt="{html.escape(label, quote=True)}" src="{html.escape(url, quote=True)}">')
+        else:
+            parts.append(f'<a href="{html.escape(url, quote=True)}" target="_blank" rel="noreferrer">{_emphasis(label)}</a>')
+        start = match.end()
+    parts.append(_emphasis(text[start:]))
+    return "".join(parts)
 
 
 def _cells(line: str) -> list[str]:

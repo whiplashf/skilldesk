@@ -1,4 +1,4 @@
-class ApiError extends Error {
+export class ApiError extends Error {
   readonly status: number;
 
   constructor(status: number, message: string) {
@@ -70,12 +70,13 @@ async function readFailureReason(response: Response): Promise<string | null> {
  * GET a JSON document from the local API.
  * Always uses a relative URL: dev goes through the Vite proxy, production is same-origin.
  */
-export async function getJson<T>(path: string, signal: AbortSignal): Promise<T> {
+export async function getJson<T>(path: string, signal?: AbortSignal, options?: RequestInit): Promise<T> {
   let response: Response;
   try {
     response = await fetch(path, {
       signal,
-      headers: { accept: 'application/json' },
+      ...options,
+      headers: { accept: 'application/json', ...options?.headers },
     });
   } catch (error) {
     if (isAbortError(error)) {
@@ -90,4 +91,11 @@ export async function getJson<T>(path: string, signal: AbortSignal): Promise<T> 
   }
 
   return (await response.json()) as T;
+}
+
+export async function writeJson<T>(path: string, method: string, body?: unknown, revision?: number): Promise<T> {
+  const { token } = await getJson<{ token: string }>('/api/session');
+  const headers: Record<string, string> = { 'X-Skilldesk-Token': token, 'Content-Type': 'application/json' };
+  if (revision !== undefined) headers['If-Match'] = String(revision);
+  return getJson<T>(path, undefined, { method, headers, body: JSON.stringify(body) });
 }

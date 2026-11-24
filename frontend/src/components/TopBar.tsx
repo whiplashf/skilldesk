@@ -1,6 +1,6 @@
 import type { Health } from '../api/types';
 import { formatCount, formatDateTime, formatRelative, toIsoString } from '../lib/format';
-import { HASH, type Route } from '../lib/route';
+import { libraryHref, HASH, type Route } from '../lib/route';
 import type { AsyncState } from '../lib/useApi';
 import type { ThemePref } from '../lib/theme';
 import { ThemeSwitch } from './ThemeSwitch';
@@ -14,8 +14,8 @@ export interface TopBarProps {
 }
 
 const TABS: ReadonlyArray<{ hash: string; label: string; matches: ReadonlyArray<Route['name']> }> = [
-  { hash: HASH.library, label: '库', matches: ['library', 'skill'] },
-  { hash: HASH.tracking, label: '跟踪', matches: ['tracking'] },
+  { hash: HASH.library, label: '本机技能库', matches: ['library', 'skill'] },
+  { hash: HASH.tracking, label: '安装健康', matches: ['tracking'] },
   { hash: HASH.settings, label: '设置', matches: ['settings'] },
 ];
 
@@ -60,7 +60,7 @@ export function TopBar({ route, health, onRetryHealth, themePref, onThemePrefCha
 
   return (
     <header className="topbar">
-      <a className="brand" href={HASH.library}>
+      <a className="brand" href={libraryHref()}>
         skilldesk
       </a>
       {version === undefined ? null : <span className="brand-version mono">v{version}</span>}
@@ -69,7 +69,7 @@ export function TopBar({ route, health, onRetryHealth, themePref, onThemePrefCha
         {TABS.map((tab) => {
           const active = tab.matches.includes(route.name);
           return (
-            <a key={tab.hash} className={active ? 'tab is-active' : 'tab'} href={tab.hash} aria-current={active ? 'page' : undefined}>
+            <a key={tab.hash} className={active ? 'tab is-active' : 'tab'} href={tab.hash === HASH.library ? libraryHref() : tab.hash} aria-current={active ? 'page' : undefined}>
               {tab.label}
             </a>
           );

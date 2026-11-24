@@ -14,8 +14,13 @@ import { TrackingPage } from './pages/TrackingPage';
 
 export function App() {
   const route = useHashRoute();
-  const health = useApi<Health>((signal) => api.health(signal), []);
+  const health = useApi<Health>((signal) => api.health(signal), [], true);
   const theme = useThemePref();
+  useEffect(() => {
+    const refresh = () => { if (!document.hidden) health.reload(); };
+    window.addEventListener('focus', refresh);
+    return () => window.removeEventListener('focus', refresh);
+  }, [health.reload]);
 
   useEffect(() => {
     if (window.location.hash === '') {
@@ -59,6 +64,8 @@ export function App() {
       <main className="main">
         {route.name === 'library' || route.name === 'skill' ? (
           <LibraryPage
+            generation={health.state.status === 'ready' ? health.state.data.meta.generation : ''}
+            onScanned={health.reload}
             selectedKey={route.name === 'skill' ? route.identityKey : null}
             onOpenSkill={openSkill}
           />

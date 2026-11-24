@@ -1,26 +1,10 @@
-import type { RefObject } from 'react';
 import type { Facets } from '../api/types';
-import type { AsyncState } from '../lib/useApi';
 import type { FacetAxis, Filters } from '../lib/filters';
 import { confidenceLabel, healthLabel, hostKindLabel } from '../lib/labels';
 import { sourceHost, sourceTail } from '../lib/format';
 import { HASH } from '../lib/route';
 import { FacetGroup } from './FacetGroup';
 import { FacetRow } from './FacetRow';
-import { ErrorState } from './ErrorState';
-import { Skeleton } from './Skeleton';
-
-export interface FilterRailProps {
-  search: string;
-  onSearchChange: (value: string) => void;
-  searchInputRef: RefObject<HTMLInputElement | null>;
-  facets: AsyncState<Facets>;
-  filters: Filters;
-  onToggleFacet: (axis: FacetAxis, value: string) => void;
-  onClearFilters: () => void;
-  hasFilters: boolean;
-  onRetryFacets: () => void;
-}
 
 const CONFIDENCE_ORDER = ['recorded', 'declared', 'none'] as const;
 const HEALTH_ORDER = ['unclaimed_source', 'duplicate_content', 'dangling_link'] as const;
@@ -31,17 +15,7 @@ function orderBy(values: ReadonlyArray<string>, order: ReadonlyArray<string>): s
   return [...known, ...rest];
 }
 
-function FacetSkeleton() {
-  return (
-    <div className="facet-skeleton" aria-hidden="true">
-      {[94, 78, 86, 66].map((width) => (
-        <Skeleton key={width} width={`${width}%`} height={11} />
-      ))}
-    </div>
-  );
-}
-
-function FacetGroups({
+export function FacetGroups({
   facets,
   filters,
   onToggleFacet,
@@ -135,71 +109,5 @@ function FacetGroups({
         />
       </FacetGroup>
     </>
-  );
-}
-
-export function FilterRail({
-  search,
-  onSearchChange,
-  searchInputRef,
-  facets,
-  filters,
-  onToggleFacet,
-  onClearFilters,
-  hasFilters,
-  onRetryFacets,
-}: FilterRailProps) {
-  return (
-    <aside className="rail" aria-label="筛选">
-      <div className="search">
-        <input
-          ref={searchInputRef}
-          type="search"
-          className="search-input"
-          placeholder="搜索名称或描述"
-          aria-label="搜索 skill"
-          spellCheck={false}
-          autoComplete="off"
-          value={search}
-          onChange={(event) => {
-            onSearchChange(event.target.value);
-          }}
-        />
-        {search === '' ? (
-          <kbd className="search-hint" aria-hidden="true">
-            /
-          </kbd>
-        ) : (
-          <button
-            type="button"
-            className="search-clear"
-            aria-label="清空搜索"
-            onClick={() => {
-              onSearchChange('');
-            }}
-          >
-            ×
-          </button>
-        )}
-      </div>
-
-      <FacetGroup title="收藏" hint="M2">
-        <FacetRow label="仅收藏" sub="M2 可用" disabled title="收藏在 M2 上线后才可筛选" />
-      </FacetGroup>
-
-      {facets.status === 'loading' ? <FacetSkeleton /> : null}
-      {facets.status === 'error' ? (
-        <ErrorState title="筛选项加载失败" message={facets.error} onRetry={onRetryFacets} />
-      ) : null}
-      {facets.status === 'ready' ? (
-        <FacetGroups facets={facets.data} filters={filters} onToggleFacet={onToggleFacet} />
-      ) : null}
-
-      {hasFilters ? (
-        <button type="button" className="rail-clear" onClick={onClearFilters}>
-          清空筛选
-        </button>
-      ) : null}
-    </aside>
   );
 }

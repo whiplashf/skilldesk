@@ -13,8 +13,35 @@ export const HASH = {
   settings: '#/settings',
 } as const;
 
+export function libraryParams(): URLSearchParams {
+  return new URLSearchParams(window.location.hash.split('?')[1] ?? '');
+}
+
+function librarySuffix(): string {
+  const onLibrary = /^#\/(library|skill)(\/|\?|$)/.test(window.location.hash);
+  return onLibrary ? libraryParams().toString() : sessionStorage.getItem('skilldesk.library-query') ?? '';
+}
+
+export function libraryHref(): string {
+  const query = librarySuffix();
+  return HASH.library + (query ? '?' + query : '');
+}
+
+export function updateLibraryParams(changes: Record<string, string>, reset = false): void {
+  const params = reset ? new URLSearchParams() : libraryParams();
+  for (const [key, value] of Object.entries(changes)) {
+    if (value) params.set(key, value);
+    else params.delete(key);
+  }
+  const query = params.toString();
+  sessionStorage.setItem('skilldesk.library-query', query);
+  window.history.replaceState(null, '', HASH.library + (query ? '?' + query : ''));
+  window.dispatchEvent(new HashChangeEvent('hashchange'));
+}
+
 export function skillHash(identityKey: string): string {
-  return `#/skill/${encodeURIComponent(identityKey)}`;
+  const query = librarySuffix();
+  return `#/skill/${encodeURIComponent(identityKey)}` + (query ? '?' + query : '');
 }
 
 export function isLibrarySurface(route: Route): boolean {
@@ -35,7 +62,7 @@ function decode(value: string): string {
  */
 function parseRoute(hash: string): Route {
   const path = hash.startsWith('#') ? hash.slice(1) : hash;
-  const segments = path.split('/').filter((segment) => segment.length > 0);
+  const segments = (path.split('?')[0] || '').split('/').filter((segment) => segment.length > 0);
   const head = segments[0];
 
   if (head === undefined) {

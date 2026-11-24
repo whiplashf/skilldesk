@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import type { FileContent } from '../api/types';
 import { api } from '../api/endpoints';
 import { formatBytes } from '../lib/format';
-import { resolveAssetSources } from '../lib/html';
+import { SkillBody, type DocumentTarget } from './SkillBody';
 import { fileKindLabel } from '../lib/labels';
 import { useApi } from '../lib/useApi';
 import { ErrorState } from './ErrorState';
@@ -11,15 +11,15 @@ import { Skeleton } from './Skeleton';
 export interface FileOverlayProps {
   skillKey: string;
   rel: string;
+  anchor?: string;
+  raw?: boolean;
+  onFile: (target: DocumentTarget) => void;
   onClose: () => void;
 }
 
-function MarkdownBody({ html, identityKey }: { html: string; identityKey: string }) {
-  const resolved = useMemo(() => resolveAssetSources(html, identityKey), [html, identityKey]);
-  return <div className="prose" dangerouslySetInnerHTML={{ __html: resolved }} />;
-}
-
-function FileBody({ file, identityKey }: { file: FileContent; identityKey: string }) {
+function FileBody({ file, identityKey, anchor, onFile }: {
+  file: FileContent; identityKey: string; anchor?: string; onFile: (target: DocumentTarget) => void;
+}) {
   if (file.kind === 'image') {
     return file.url === undefined ? (
       <p className="block-note">图片没有可用的原始地址。</p>
@@ -32,7 +32,7 @@ function FileBody({ file, identityKey }: { file: FileContent; identityKey: strin
     return file.html === undefined ? (
       <p className="block-note">该 Markdown 没有渲染结果。</p>
     ) : (
-      <MarkdownBody html={file.html} identityKey={identityKey} />
+      <SkillBody html={file.html} identityKey={identityKey} file={file.rel} anchor={anchor} onFile={onFile} />
     );
   }
 
@@ -52,8 +52,8 @@ function FileBody({ file, identityKey }: { file: FileContent; identityKey: strin
   );
 }
 
-export function FileOverlay({ skillKey, rel, onClose }: FileOverlayProps) {
-  const file = useApi<FileContent>((signal) => api.file(skillKey, rel, signal), [skillKey, rel]);
+export function FileOverlay({ skillKey, rel, anchor, raw, onFile, onClose }: FileOverlayProps) {
+  const file = useApi<FileContent>((signal) => api.file(skillKey, rel, signal, raw), [skillKey, rel, raw]);
   const closeRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -107,7 +107,7 @@ export function FileOverlay({ skillKey, rel, onClose }: FileOverlayProps) {
           {file.state.status === 'error' ? (
             <ErrorState title="文件加载失败" message={file.state.error} onRetry={file.reload} />
           ) : null}
-          {file.state.status === 'ready' ? <FileBody file={file.state.data} identityKey={skillKey} /> : null}
+          {file.state.status === 'ready' ? <FileBody file={file.state.data} identityKey={skillKey} anchor={anchor} onFile={onFile} /> : null}
         </div>
       </div>
     </div>

@@ -1,4 +1,4 @@
-/** Response shapes of the local FastAPI server (verified against the live M1 build). */
+/** Response shapes of the local FastAPI server. */
 
 export type ConfidenceValue = 'recorded' | 'declared' | 'none';
 
@@ -16,7 +16,28 @@ export interface Provenance {
   label: string;
 }
 
+export interface GitHubSource { repo: string; path: string }
+export interface VersionStatus {
+  status: 'release' | 'changed' | 'current' | 'unknown';
+  checkedAt: number;
+  installed: string;
+  latest: string;
+  url: string;
+  detail: string;
+}
+export interface AISettings {
+  baseUrl: string; model: string; hasKey: boolean; enabled: boolean;
+  baseFromEnv: boolean; modelFromEnv: boolean; keyFromEnv: boolean;
+}
+export interface AssetChanges { favorite?: boolean; mine?: boolean; github?: GitHubSource | null }
+
 export interface SkillSummary {
+  access: { agent: string; scope: string }[];
+  favorite: boolean;
+  mine: boolean;
+  upstream: (GitHubSource & { ref: string }) | null;
+  versionStatus: VersionStatus | null;
+  libraryRevision: number;
   identity_key: string;
   name: string;
   dir_name: string;
@@ -89,6 +110,7 @@ export interface Facet {
 }
 
 export interface Facets {
+  agents: Facet[];
   hosts: Facet[];
   sources: Facet[];
   confidence: Facet[];
@@ -106,6 +128,7 @@ export interface IndexResponse {
 
 /** `meta` numbers are serialised as strings by the server. */
 export interface HealthMeta {
+  generation: string;
   schema: string;
   version: string;
   scanned_at: string;

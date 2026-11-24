@@ -1,136 +1,126 @@
-import { useMemo } from 'react';
-import type { SkillDetail as SkillDetailData } from '../api/types';
+import { useEffect, useState } from 'react';
 import { api } from '../api/endpoints';
-import { formatBytes, formatCount, formatDateTime, toIsoString } from '../lib/format';
-import { confidenceTone, healthLabel, healthTone } from '../lib/labels';
-import { HASH } from '../lib/route';
-import { resolveAssetSources } from '../lib/html';
+import { ApiError, describeError } from '../api/client';
+import type { AssetChanges, SkillDetail as Detail, SkillSummary } from '../api/types';
+import { accessLabel, healthLabel, VERSION_LABELS } from '../lib/labels';
+import { formatDateTime } from '../lib/format';
+import { HASH, libraryHref } from '../lib/route';
 import { useApi } from '../lib/useApi';
-import { Badge } from './Badge';
-import { DetailSkeleton } from './Skeleton';
 import { ErrorState } from './ErrorState';
-import { PlacementsBlock } from './PlacementsBlock';
+import { DetailSkeleton } from './Skeleton';
 import { ProvenanceBlock } from './ProvenanceBlock';
+import { PlacementsBlock } from './PlacementsBlock';
+import { SkillBody, type DocumentTarget } from './SkillBody';
 import { SupportFiles } from './SupportFiles';
 
-function SkillBody({ html, identityKey }: { html: string; identityKey: string }) {
-  const resolved = useMemo(() => resolveAssetSources(html, identityKey), [html, identityKey]);
-  return <div className="prose" dangerouslySetInnerHTML={{ __html: resolved }} />;
+type Save = (item: SkillSummary, changes: AssetChanges) => Promise<boolean>;
+
+function OriginEditor({ data, save, busy }: { data: Detail; save: Save; busy: boolean }) {
+  const [editing, setEditing] = useState(false);
+  const [repo, setRepo] = useState('');
+  const [path, setPath] = useState('');
+  const [mine, setMine] = useState(data.mine);
+  useEffect(() => setMine(data.mine), [data.mine]);
+  return <div className="origin-editor">
+    <label className="check-field"><input type="checkbox" checked={mine} disabled={busy}
+      onChange={async event => {
+        const selected = event.target.checked;
+        setMine(selected);
+        if (!await save(data, { mine: selected })) setMine(data.mine);
+      }} /> 我写的</label>
+    {data.upstream && <p className="source-coordinate">GitHub · {data.upstream.repo} / {data.upstream.path || '路径待确认'}</p>}
+    {editing ? <form className="settings-form" onSubmit={async event => {
+      event.preventDefault();
+      if (await save(data, { github: { repo, path } })) setEditing(false);
+    }}>
+      <label>GitHub 仓库<input required placeholder="owner/repo" value={repo} onChange={e => setRepo(e.target.value)} /></label>
+      <label>仓库内路径<input required placeholder="skills/example/SKILL.md" value={path} onChange={e => setPath(e.target.value)} /></label>
+      <div className="form-actions"><button className="button" disabled={busy}>保存来源</button>
+        <button type="button" className="button" onClick={() => setEditing(false)}>取消</button>
+        <button type="button" className="link-button" disabled={busy} onClick={async () => {
+          if (await save(data, { github: null })) setEditing(false);
+        }}>恢复扫描来源</button></div>
+    </form> : <button className="button" type="button" onClick={() => {
+      setRepo(data.upstream?.repo ?? ''); setPath(data.upstream?.path || 'SKILL.md'); setEditing(true);
+    }}>{data.upstream ? '编辑 GitHub 来源' : '关联 GitHub 来源'}</button>}
+  </div>;
 }
 
-export interface SkillDetailProps {
-  identityKey: string;
-  healthLabels: Record<string, string>;
-  onOpenFile: (rel: string) => void;
+interface Props {
+  identityKey: string; generation: string; busy: boolean; onSave: Save;
+  onFile: (target: DocumentTarget) => void; onVersion: () => void;
 }
 
-export function SkillDetail({ identityKey, healthLabels, onOpenFile }: SkillDetailProps) {
-  const detail = useApi<SkillDetailData>((signal) => api.skill(identityKey, signal), [identityKey]);
-  const files = useApi((signal) => api.files(identityKey, signal), [identityKey]);
-
-  if (detail.state.status === 'loading') {
-    return <DetailSkeleton />;
+export function SkillDetail({ identityKey, generation, busy, onSave, onFile, onVersion }: Props) {
+  const detail = useApi(signal => api.skill(identityKey, signal), [identityKey, generation], true);
+  const files = useApi(signal => api.files(identityKey, signal), [identityKey, generation], true);
+  const [translation, setTranslation] = useState<{ hash: string; html: string }>();
+  const [chinese, setChinese] = useState(false);
+  const [translating, setTranslating] = useState(false);
+  const [translateError, setTranslateError] = useState('');
+  const [needsConfig, setNeedsConfig] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [versionError, setVersionError] = useState('');
+  if (detail.state.status === 'loading') return <DetailSkeleton />;
+  if (detail.state.status === 'error') return <div className="detail"><a href={libraryHref()}>← 返回列表</a>
+    <ErrorState message={detail.state.error} onRetry={detail.reload} /></div>;
+  const item = detail.state.data;
+  const status = item.versionStatus;
+  const translated = translation?.hash === item.content_hash ? translation.html : undefined;
+  const showChinese = chinese && translated !== undefined;
+  async function toggleTranslation() {
+    setTranslateError(''); setNeedsConfig(false);
+    if (translated !== undefined) { setChinese(!showChinese); return; }
+    setTranslating(true);
+    try {
+      const result = await api.translate(identityKey);
+      setTranslation({ hash: item.content_hash, html: result.html }); setChinese(true);
+    } catch (error) { setTranslateError(describeError(error)); setNeedsConfig(error instanceof ApiError && error.status === 501); }
+    finally { setTranslating(false); }
   }
-
-  if (detail.state.status === 'error') {
-    return <ErrorState title="skill 加载失败" message={detail.state.error} onRetry={detail.reload} />;
+  async function checkVersion() {
+    setChecking(true); setVersionError('');
+    try { await api.checkVersion(identityKey, Boolean(status)); onVersion(); }
+    catch (error) { setVersionError(describeError(error)); }
+    finally { setChecking(false); }
   }
-
-  const data = detail.state.data;
-
-  return (
-    <article className="detail">
-      <a className="detail-back" href={HASH.library}>
-        ← 列表
-      </a>
-
-      <header className="detail-head">
-        <div className="detail-title-row">
-          <h2 className="detail-name">{data.name}</h2>
-          <span className="detail-dir mono">{data.dir_name}</span>
-        </div>
-        <div className="detail-badges">
-          <Badge tone={confidenceTone(data.provenance.confidence)} title="来源可信度">
-            {data.confidenceLabel}
-          </Badge>
-          {data.health.length === 0 ? (
-            <Badge tone="ok">无已知问题</Badge>
-          ) : (
-            data.health.map((kind) => (
-              <Badge tone={healthTone(kind)} key={kind}>
-                {healthLabel(kind, healthLabels)}
-              </Badge>
-            ))
-          )}
-        </div>
-        <p className={data.description === '' ? 'detail-desc dim' : 'detail-desc'}>
-          {data.description === '' ? '无描述' : data.description}
-        </p>
-      </header>
-
-      <ProvenanceBlock provenance={data.provenance} confidenceLabel={data.confidenceLabel} />
-
-      <PlacementsBlock placements={data.placements} />
-
-      <section className="block">
-        <h3 className="block-title">元数据</h3>
-        <dl className="meta-grid">
-          <div>
-            <dt>体积</dt>
-            <dd className="mono">{formatBytes(data.bytes)}</dd>
-          </div>
-          <div>
-            <dt>行数</dt>
-            <dd className="mono">{formatCount(data.lines)}</dd>
-          </div>
-          <div>
-            <dt>修改时间</dt>
-            <dd>
-              <time title={formatDateTime(data.mtime)} dateTime={toIsoString(data.mtime)}>
-                {formatDateTime(data.mtime)}
-              </time>
-            </dd>
-          </div>
-          <div>
-            <dt>落点</dt>
-            <dd className="mono">{data.placement_count}</dd>
-          </div>
-          <div>
-            <dt>许可证</dt>
-            <dd className={data.license === '' ? 'mono dim' : 'mono'}>{data.license === '' ? '未声明' : data.license}</dd>
-          </div>
-        </dl>
-      </section>
-
-      {data.issues.length === 0 ? null : (
-        <section className="block">
-          <h3 className="block-title">
-            健康问题 <span className="block-count mono">{data.issues.length}</span>
-          </h3>
-          <ul className="issues">
-            {data.issues.map((issue) => (
-              <li className="issue" key={issue.id}>
-                <Badge tone={healthTone(issue.kind)}>{healthLabel(issue.kind, healthLabels)}</Badge>
-                <span className="issue-detail">{issue.detail}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      <SupportFiles state={files.state} onOpenFile={onOpenFile} onRetry={files.reload} />
-
-      <section className="block block--body">
-        <h3 className="block-title">SKILL.md</h3>
-        <SkillBody html={data.html} identityKey={data.identity_key} />
-      </section>
-
-      <footer className="detail-foot">
-        <span className="detail-foot-label">身份键</span>
-        <code className="identity-key" title={data.identity_key}>
-          {data.identity_key}
-        </code>
-      </footer>
-    </article>
-  );
+  return <article className="detail">
+    <a className="detail-back" href={libraryHref()}>← 返回列表</a>
+    <header className="reader-heading">
+      <div><h1 className="detail-name">{item.name}</h1>
+        <p className="reader-access">{item.access.map(accessLabel).join('、') || 'Agent 范围待确认'}</p></div>
+      <button className="button star-action" type="button" aria-pressed={item.favorite} disabled={busy}
+        onClick={() => void onSave(item, { favorite: !item.favorite })}>{item.favorite ? '★ 已收藏' : '☆ 收藏'}</button>
+    </header>
+    <section className="reader-body" aria-label="SKILL.md 正文">
+      <div className="reader-toolbar"><button type="button" className="link-button mono"
+        onClick={() => onFile({ rel: 'SKILL.md', raw: true })}>SKILL.md 源文件</button>
+        <button type="button" className="button translate-action" disabled={translating} onClick={() => void toggleTranslation()}>
+          {translating ? '正在翻译…' : showChinese ? '查看原文' : translated !== undefined ? '查看中文译文' : 'AI 翻译成中文'}
+        </button></div>
+      {translateError && <p className="action-message" role="status">{translateError} {needsConfig && <a href={HASH.settings}>打开翻译设置</a>}</p>}
+      <SkillBody html={showChinese ? translated : item.html} identityKey={identityKey} onFile={onFile} />
+    </section>
+    {item.upstream && <section className="reader-section">
+      <div className="section-heading"><h2>GitHub 版本</h2>
+        <button type="button" className="button" disabled={checking || !item.upstream.path} onClick={() => void checkVersion()}>
+          {checking ? '正在检查…' : '检查版本'}</button></div>
+      {status ? <div className="version-result"><strong>{VERSION_LABELS[status.status]}</strong>
+        {(status.installed || status.latest) && <span className="mono">{[status.installed, status.latest].filter(Boolean).join(' → ')}</span>}
+        <p>{status.detail} · {formatDateTime(status.checkedAt)}</p>
+        {status.url && <a href={status.url} target="_blank" rel="noreferrer">查看 GitHub 发布说明</a>}</div>
+        : <p className="block-note">{item.upstream.path ? '尚未检查这个 skill 的上游版本。' : '请在来源中补全仓库内的 SKILL.md 路径。'}</p>}
+      {versionError && <p className="action-message" role="alert">{versionError}</p>}
+    </section>}
+    <details className="reader-fold"><summary>来源与可用范围</summary>
+      <OriginEditor data={item} save={onSave} busy={busy} />
+      <ProvenanceBlock provenance={item.provenance} confidenceLabel={item.confidenceLabel} />
+      <PlacementsBlock placements={item.placements} />
+      {item.issues.map(issue => <p className="block-note" key={issue.id}>{healthLabel(issue.kind)} · {issue.detail}</p>)}
+      <p className="block-note">许可证 {item.license || '未声明'} · {item.lines} 行 · {formatDateTime(item.mtime)}</p>
+    </details>
+    <details className="reader-fold"><summary>支持文件{files.state.status === 'ready' ? ' · ' + files.state.data.items.length : ''}</summary>
+      <SupportFiles state={files.state} onOpenFile={rel => onFile({ rel })} onRetry={files.reload} />
+    </details>
+  </article>;
 }

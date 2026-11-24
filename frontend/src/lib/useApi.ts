@@ -20,6 +20,7 @@ const LOADING = { status: 'loading', data: null, error: null } as const;
 export function useApi<T>(
   load: (signal: AbortSignal) => Promise<T>,
   deps: readonly unknown[],
+  retainData = false,
 ): AsyncResult<T> {
   const [state, setState] = useState<AsyncState<T>>(LOADING);
   const [attempt, setAttempt] = useState(0);
@@ -33,7 +34,7 @@ export function useApi<T>(
     const run = loadRef.current;
     const controller = new AbortController();
     let active = true;
-    setState(LOADING);
+    setState(previous => retainData && previous.status === 'ready' ? previous : LOADING);
 
     run(controller.signal).then(
       (data) => {

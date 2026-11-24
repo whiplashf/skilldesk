@@ -1,3 +1,5 @@
+import { TranslationSettings } from '../components/TranslationSettings';
+import { ProjectSettings } from '../components/ProjectSettings';
 import type { Health, RootsResponse } from '../api/types';
 import { api } from '../api/endpoints';
 import { formatCount, formatDateTime, formatRelative, toIsoString } from '../lib/format';
@@ -115,8 +117,10 @@ export function SettingsPage({ health, onRetryHealth }: SettingsPageProps) {
 
   return (
     <div className="page">
-      <PageHeader title="设置" sub="M1 只读：宿主根与索引信息仅展示，不提供任何编辑动作。" />
+      <PageHeader title="设置" sub="管理本机扫描范围和阅读时使用的翻译服务。" />
 
+      <ProjectSettings onChange={() => { roots.reload(); onRetryHealth(); }} />
+      <TranslationSettings />
       <section className="block">
         <h2 className="block-title">宿主根</h2>
         <HostRootsTable roots={roots.state} onRetry={roots.reload} />
@@ -127,21 +131,6 @@ export function SettingsPage({ health, onRetryHealth }: SettingsPageProps) {
         <IndexTable health={health} onRetry={onRetryHealth} />
       </section>
 
-      <section className="block">
-        <h2 className="block-title">用户库</h2>
-        <p className="block-note">
-          M2 将在这里管理用户库：收藏、标签、集合、来源纠正与导入导出。这些改动写入独立的 library.json，不会动
-          skill 内容文件。
-        </p>
-      </section>
-
-      <section className="block">
-        <h2 className="block-title">关于</h2>
-        <p className="block-note">
-          skilldesk 是本地优先的 agent skill 管理器。本页面只读取本机索引；写操作要等可写里程碑开放，届时会带显式确认与
-          dry-run。
-        </p>
-      </section>
     </div>
   );
 }

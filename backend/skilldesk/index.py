@@ -6,13 +6,15 @@ rebuild writes a fresh database next to the old one and swaps it in with
 """
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
 
-from . import SCHEMA_VERSION, __version__
+from . import SCHEMA_VERSION, __version__, library
 from .config import index_path
 from .health import Issue
 from .scan import ScanResult
@@ -43,6 +45,9 @@ CREATE TABLE skill(
     primary_kind TEXT NOT NULL
 );
 
+CREATE TABLE agent_access(host_root TEXT, agent TEXT, scope TEXT, PRIMARY KEY(host_root,agent,scope));
+CREATE TABLE scan_input(path TEXT PRIMARY KEY, stamp TEXT NOT NULL);
+
 CREATE TABLE placement(
     identity_key TEXT NOT NULL,
     host_root TEXT NOT NULL,
@@ -60,6 +65,7 @@ CREATE TABLE provenance(
     repo TEXT NOT NULL,
     path TEXT NOT NULL,
     ref TEXT NOT NULL,
+    tree TEXT NOT NULL,
     confidence TEXT NOT NULL,
     evidence TEXT NOT NULL
 );
@@ -92,14 +98,15 @@ def rebuild(result: ScanResult, issues: list[Issue], path: Path | str | None = N
     """Write a complete new index atomically. Returns summary counts."""
     target = Path(path) if path else index_path()
     target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_suffix(target.suffix + ".tmp")
-    if tmp.exists():
-        tmp.unlink()
-
-    conn = sqlite3.connect(str(tmp))
+    with tempfile.NamedTemporaryFile(dir=target.parent, prefix=target.name + ".", suffix=".tmp", delete=False) as tmpfile:
+        tmp = Path(tmpfile.name)
+    conn = sqlite3.connect(tmp)
     try:
         conn.executescript(SCHEMA)
         scanned_at = int(time.time())
+        conn.executemany("INSERT INTO scan_input VALUES (?, ?)", result.inputs.items())
+        conn.executemany("INSERT INTO agent_access VALUES (?, ?, ?)",
+                         [(str(root.path), agent, scope) for root in result.roots for agent, scope in root.access])
         conn.executemany(
             "INSERT INTO host_root(path, kind, label, priority, exists_, entries) VALUES (?,?,?,?,?,?)",
             [
@@ -152,7 +159,7 @@ def rebuild(result: ScanResult, issues: list[Issue], path: Path | str | None = N
             ],
         )
         conn.executemany(
-            "INSERT INTO provenance(identity_key, host, repo, path, ref, confidence, evidence) VALUES (?,?,?,?,?,?,?)",
+            "INSERT INTO provenance(identity_key, host, repo, path, ref, tree, confidence, evidence) VALUES (?,?,?,?,?,?,?,?)",
             [
                 (
                     skill.identity_key,
@@ -160,6 +167,7 @@ def rebuild(result: ScanResult, issues: list[Issue], path: Path | str | None = N
                     skill.provenance.repo,
                     skill.provenance.path,
                     skill.provenance.ref,
+                    skill.provenance.tree,
                     skill.provenance.confidence,
                     skill.provenance.evidence,
                 )
@@ -177,6 +185,7 @@ def rebuild(result: ScanResult, issues: list[Issue], path: Path | str | None = N
             "schema": str(SCHEMA_VERSION),
             "version": __version__,
             "scanned_at": str(scanned_at),
+            "generation": str(time.time_ns()),
             "skills": str(len(result.skills)),
             "placements": str(sum(len(skill.placements) for skill in result.skills)),
             "dangling": str(len(result.dangling)),
@@ -185,10 +194,19 @@ def rebuild(result: ScanResult, issues: list[Issue], path: Path | str | None = N
         }
         conn.executemany("INSERT INTO meta(k, v) VALUES (?, ?)", list(meta.items()))
         conn.commit()
+    except BaseException:
+        conn.close()
+        tmp.unlink(missing_ok=True)
+        raise
     finally:
         conn.close()
 
     os.replace(tmp, target)
+    current = connect(target)
+    try:
+        library.reconcile(current)
+    finally:
+        current.close()
     return meta
 
 
@@ -201,6 +219,18 @@ def _count_entries(path: Path) -> int:
 
 def meta(conn: sqlite3.Connection) -> dict[str, str]:
     return {row["k"]: row["v"] for row in conn.execute("SELECT k, v FROM meta")}
+
+
+def is_current(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    conn = connect(path)
+    try:
+        return meta(conn).get("schema") == str(SCHEMA_VERSION)
+    except sqlite3.DatabaseError:
+        return False
+    finally:
+        conn.close()
 
 
 def counts(conn: sqlite3.Connection) -> dict[str, int]:
@@ -221,7 +251,10 @@ def counts(conn: sqlite3.Connection) -> dict[str, int]:
 _ITEM_SQL = """
 SELECT s.identity_key, s.name, s.dir_name, s.description, s.license, s.content_hash,
        s.bytes, s.lines, s.mtime, s.realpath, s.primary_kind,
-       p.host, p.repo, p.path, p.ref, p.confidence, p.evidence,
+       p.host, p.repo, p.path, p.ref, p.tree, p.confidence, p.evidence,
+       (SELECT json_group_array(DISTINCT json_object('agent', a.agent, 'scope', a.scope))
+        FROM placement pl JOIN agent_access a ON pl.host_root = a.host_root
+        WHERE pl.identity_key = s.identity_key) AS access,
        (SELECT group_concat(pl.kind) FROM placement pl WHERE pl.identity_key = s.identity_key) AS kinds,
        (SELECT count(*) FROM placement pl WHERE pl.identity_key = s.identity_key) AS placement_count,
        (SELECT group_concat(DISTINCT h.kind) FROM health_issue h WHERE h.identity_key = s.identity_key) AS issues
@@ -244,6 +277,7 @@ def _row_to_item(row: sqlite3.Row) -> dict[str, Any]:
         "realpath": row["realpath"],
         "primary_kind": row["primary_kind"],
         "host_kinds": sorted({kind for kind in (row["kinds"] or "").split(",") if kind}),
+        "access": json.loads(row["access"]),
         "placement_count": row["placement_count"],
         "health": sorted({kind for kind in (row["issues"] or "").split(",") if kind}),
         "provenance": {
@@ -251,6 +285,7 @@ def _row_to_item(row: sqlite3.Row) -> dict[str, Any]:
             "repo": row["repo"] if "repo" in keys else "",
             "path": row["path"] if "path" in keys else "",
             "ref": row["ref"] if "ref" in keys else "",
+            "tree": row["tree"] or "",
             "confidence": (row["confidence"] if "confidence" in keys else "") or "none",
             "evidence": row["evidence"] if "evidence" in keys else "",
             "label": _provenance_label(row, keys),
@@ -276,6 +311,9 @@ def list_skills(
     source: str = "",
     confidence: str = "",
     health: str = "",
+    agent: str = "",
+    view: str = "all",
+    assets: dict | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> dict[str, Any]:
@@ -288,6 +326,20 @@ def list_skills(
     if host:
         where.append("EXISTS (SELECT 1 FROM placement pl WHERE pl.identity_key = s.identity_key AND pl.kind = ?)")
         params.append(host)
+    if agent:
+        where.append("EXISTS (SELECT 1 FROM placement pl JOIN agent_access a ON a.host_root = pl.host_root "
+                     "WHERE pl.identity_key = s.identity_key AND a.agent = ?)")
+        params.append(agent)
+    annotations = assets or {}
+    annotated = "SELECT value FROM json_each(?)"
+    if view in ("favorites", "mine"):
+        flag = "favorite" if view == "favorites" else "mine"
+        where.append(f"s.identity_key IN ({annotated})")
+        params.append(json.dumps([key for key, value in annotations.items() if value.get(flag)]))
+    if view == "github":
+        where.append(f"(p.host = 'github.com' OR s.identity_key IN ({annotated})) AND s.identity_key NOT IN ({annotated})")
+        params.append(json.dumps([key for key, value in annotations.items() if value.get("github")]))
+        params.append(json.dumps([key for key, value in annotations.items() if value.get("mine")]))
     if source:
         where.append("(p.host || '/' || p.repo) = ?")
         params.append(source)
@@ -336,7 +388,10 @@ def facets(conn: sqlite3.Connection) -> dict[str, list[dict[str, Any]]]:
         {"value": row["kind"], "label": row["kind"], "count": row["n"]}
         for row in conn.execute("SELECT kind, count(*) AS n FROM health_issue GROUP BY kind ORDER BY n DESC")
     ]
-    return {"hosts": hosts, "sources": sources, "confidence": confidence, "health": health}
+    agents = [{"value": row[0], "count": row[1]} for row in conn.execute(
+        "SELECT agent, count(DISTINCT identity_key) FROM agent_access JOIN placement USING(host_root) "
+        "GROUP BY agent ORDER BY agent")]
+    return {"hosts": hosts, "agents": agents, "sources": sources, "confidence": confidence, "health": health}
 
 
 def get_skill(conn: sqlite3.Connection, key: str) -> dict[str, Any] | None:

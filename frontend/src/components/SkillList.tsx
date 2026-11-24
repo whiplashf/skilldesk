@@ -1,4 +1,4 @@
-import type { IndexResponse } from '../api/types';
+import type { IndexResponse, SkillSummary } from '../api/types';
 import { formatCount } from '../lib/format';
 import { HASH } from '../lib/route';
 import type { AsyncState } from '../lib/useApi';
@@ -14,7 +14,8 @@ export interface SkillListProps {
   pageSize: number;
   selectedKey: string | null;
   hasFilters: boolean;
-  confidenceLabels: Record<string, string>;
+  onFavorite: (item: SkillSummary) => void;
+  busy: boolean;
   healthLabels: Record<string, string>;
   onOpenSkill: (identityKey: string) => void;
   onPageChange: (page: number) => void;
@@ -28,7 +29,8 @@ export function SkillList({
   pageSize,
   selectedKey,
   hasFilters,
-  confidenceLabels,
+  onFavorite,
+  busy,
   healthLabels,
   onOpenSkill,
   onPageChange,
@@ -53,7 +55,7 @@ export function SkillList({
         ) : (
           <Skeleton width="96px" height={10} />
         )}
-        <button type="button" className="icon-button" title="重新加载列表" aria-label="重新加载列表" onClick={onRefresh}>
+        <button type="button" className="icon-button" title="重新扫描本机" aria-label="重新扫描本机" disabled={busy} onClick={onRefresh}>
           ↻
         </button>
       </header>
@@ -89,7 +91,8 @@ export function SkillList({
                 item={item}
                 index={index}
                 selected={item.identity_key === selectedKey}
-                confidenceLabels={confidenceLabels}
+                busy={busy}
+                onFavorite={onFavorite}
                 healthLabels={healthLabels}
                 onOpen={onOpenSkill}
               />

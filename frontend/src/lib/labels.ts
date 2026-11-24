@@ -96,3 +96,15 @@ const FILE_KIND_LABELS: Record<SupportFileKind, string> = {
 export function fileKindLabel(kind: SupportFileKind): string {
   return FILE_KIND_LABELS[kind];
 }
+
+export function accessLabel(access: { agent: string; scope: string }): string {
+  const project = access.scope.split(/[\\/]/).filter(Boolean).pop();
+  return hostKindLabel(access.agent) + (project ? ' · ' + project + ' 项目' : ' · 全局');
+}
+
+export const VERSION_LABELS = {
+  release: '有新版本',
+  changed: '内容有变化',
+  current: '已是最新',
+  unknown: '待确认版本',
+} as const;

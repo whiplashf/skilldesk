@@ -1,4 +1,5 @@
-import { getJson, withQuery } from './client';
+import { getJson, withQuery, writeJson } from './client';
+import type { AISettings, AssetChanges, SkillSummary, VersionStatus } from './types';
 import type {
   Facets,
   FileContent,
@@ -11,6 +12,8 @@ import type {
 } from './types';
 
 export interface SkillQuery {
+  agent?: string;
+  view?: string;
   q?: string;
   host?: string;
   source?: string;
@@ -28,6 +31,15 @@ function skillPath(identityKey: string): string {
 }
 
 export const api = {
+  projects: (signal: AbortSignal) => getJson<{ saved: string[]; effective: string[] }>('/api/projects', signal),
+  changeProject: (path: string, remove = false) => writeJson('/api/projects', 'POST', { path, remove }),
+  rescan: () => writeJson<Health>('/api/scan', 'POST'),
+  patch: (item: SkillSummary, changes: AssetChanges) =>
+    writeJson<SkillSummary>('/api/assets/' + encodeURIComponent(item.identity_key), 'PATCH', changes, item.libraryRevision),
+  translate: (key: string) => writeJson<{ html: string; cached: boolean }>('/api/ai/translate', 'POST', { identity_key: key }),
+  checkVersion: (key: string, force = false) => writeJson<VersionStatus>('/api/check', 'POST', { identity_key: key, force }),
+  aiSettings: (signal: AbortSignal) => getJson<AISettings>('/api/settings/ai', signal),
+  saveAI: (body: {baseUrl: string; model: string; apiKey?: string}) => writeJson<AISettings>('/api/settings/ai', 'PUT', body),
   health: (signal: AbortSignal): Promise<Health> => getJson<Health>('/api/health', signal),
 
   facets: (signal: AbortSignal): Promise<Facets> => getJson<Facets>('/api/facets', signal),
@@ -35,6 +47,8 @@ export const api = {
   index: (query: SkillQuery, signal: AbortSignal): Promise<IndexResponse> =>
     getJson<IndexResponse>(
       withQuery('/api/index', {
+        agent: query.agent,
+        view: query.view,
         q: query.q,
         host: query.host,
         source: query.source,
@@ -52,8 +66,8 @@ export const api = {
   files: (identityKey: string, signal: AbortSignal): Promise<FilesResponse> =>
     getJson<FilesResponse>(`${skillPath(identityKey)}/files`, signal),
 
-  file: (identityKey: string, rel: string, signal: AbortSignal): Promise<FileContent> =>
-    getJson<FileContent>(withQuery(`${skillPath(identityKey)}/file`, { rel }), signal),
+  file: (identityKey: string, rel: string, signal: AbortSignal, raw?: boolean): Promise<FileContent> =>
+    getJson<FileContent>(withQuery(`${skillPath(identityKey)}/file`, { rel, raw }), signal),
 
   issues: (signal: AbortSignal): Promise<IssuesResponse> =>
     getJson<IssuesResponse>(withQuery('/api/issues', { limit: 500 }), signal),

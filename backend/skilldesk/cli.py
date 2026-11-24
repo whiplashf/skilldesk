@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -43,7 +44,7 @@ def _table(headers: list[str], rows: list[list[str]]) -> str:
 
 
 def _ensure_index() -> None:
-    if not index_path().is_file():
+    if not index_mod.is_current(index_path()):
         result = scan(load_config())
         index_mod.rebuild(result, detect(result.skills, result.dangling), index_path())
 
@@ -248,7 +249,12 @@ def _serve(args: argparse.Namespace, open_browser: bool) -> int:
 
     from .server import create_app
 
-    app = create_app()
+    remote = args.host not in {"127.0.0.1", "localhost", "::1"}
+    remote_token = os.environ.get("SKILLDESK_REMOTE_TOKEN", "") if remote else ""
+    if remote and not (args.allow_remote and remote_token):
+        print("远程访问需要 --allow-remote 和 SKILLDESK_REMOTE_TOKEN", file=sys.stderr)
+        return EXIT_ERROR
+    app = create_app(remote_token=remote_token or None)
     url = f"http://{args.host}:{args.port}/"
     if not open_browser:
         print(f"skilldesk → {url}")
@@ -328,6 +334,7 @@ def build_parser() -> argparse.ArgumentParser:
     ):
         serve_parser = sub.add_parser(name, help=help_text)
         serve_parser.add_argument("--host", default="127.0.0.1")
+        serve_parser.add_argument("--allow-remote", action="store_true", help="启用令牌保护的远程访问")
         serve_parser.add_argument("--port", type=int, default=17888)
         serve_parser.set_defaults(func=func)
 

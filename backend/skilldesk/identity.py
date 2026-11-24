@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
@@ -43,6 +44,7 @@ class Provenance:
     ref: str = ""
     confidence: str = NONE
     evidence: str = ""
+    tree: str = ""
 
     @property
     def label(self) -> str:
@@ -79,8 +81,13 @@ def normalize_source(value: str) -> tuple[str, str] | None:
         raw = f"https://{host_part}/{rest}"
 
     if "://" in raw:
-        parsed = urlparse(raw)
-        host = (parsed.hostname or "").lower()
+        try:
+            parsed = urlparse(raw)
+            host = (parsed.hostname or "").lower()
+            if parsed.port and (parsed.scheme, parsed.port) not in {("https", 443), ("http", 80), ("ssh", 22)}:
+                host = f"{host}:{parsed.port}"
+        except ValueError:
+            return None
         candidate = parsed.path
     else:
         parts = [part for part in raw.strip("/").split("/") if part]
@@ -111,9 +118,9 @@ def lockfile_paths() -> list[Path]:
     return paths
 
 
-def load_lockfile() -> dict[str, dict]:
+def load_lockfile(paths: list[Path] | None = None) -> dict[str, dict]:
     """Installed skill name → lock entry. Missing or unreadable means ``{}``."""
-    for path in lockfile_paths():
+    for path in lockfile_paths() if paths is None else paths:
         if not path.is_file():
             continue
         try:
@@ -152,10 +159,13 @@ def infer_provenance(dir_name: str, real_dir: str, frontmatter: dict, lock: dict
         if not entry:
             continue
         source = str(entry.get("sourceUrl") or entry.get("source") or "")
+        if entry.get("sourceType") == "github" and re.fullmatch(r"[\w.-]+/[\w.-]+", source):
+            source = "https://github.com/" + source
         normalized = normalize_source(source)
         if not normalized:
             continue
         host, repo = normalized
+        digest = str(entry.get("skillFolderHash", "")).lower()
         return Provenance(
             host=host,
             repo=repo,
@@ -163,9 +173,27 @@ def infer_provenance(dir_name: str, real_dir: str, frontmatter: dict, lock: dict
             ref=str(entry.get("commit") or ""),
             confidence=RECORDED,
             evidence="lockfile",
+            tree=digest if re.fullmatch(r"[0-9a-f]{40}", digest) else "",
         )
 
-    release = Path(real_dir) / "skill-release.json"
+    # A checked-out skill supplies both a repository and its exact folder.
+    directory = Path(real_dir)
+    checkout = next((parent for parent in (directory, *directory.parents) if (parent / ".git").exists()), None)
+    if checkout:
+        try:
+            def git(*args: str) -> str:
+                return subprocess.check_output(["git", "-C", str(checkout), *args], text=True,
+                                               stderr=subprocess.DEVNULL, timeout=2).strip()
+            tracked_path = (directory / "SKILL.md").relative_to(checkout).as_posix()
+            git("cat-file", "-e", "HEAD:" + tracked_path)
+            origin = normalize_source(git("config", "--get", "remote.origin.url"))
+            if origin:
+                return Provenance(origin[0], origin[1], tracked_path,
+                                  git("rev-parse", "HEAD"), RECORDED, "git checkout")
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+    release = directory / "skill-release.json"
     if release.is_file():
         try:
             payload = json.loads(release.read_text(encoding="utf-8"))
@@ -175,7 +203,9 @@ def infer_provenance(dir_name: str, real_dir: str, frontmatter: dict, lock: dict
         repository = str((source or {}).get("repository") or "") if isinstance(source, dict) else ""
         normalized = normalize_source(repository)
         if normalized:
-            return Provenance(host=normalized[0], repo=normalized[1], confidence=DECLARED, evidence="skill-release.json")
+            path = clean_path(str(source.get("skillPath") or source.get("path") or ""))
+            return Provenance(normalized[0], normalized[1], path, str(source.get("commit") or ""),
+                              DECLARED, "skill-release.json")
 
     declared_source = _from_frontmatter(frontmatter)
     normalized = normalize_source(declared_source)

@@ -1,65 +1,31 @@
 import type { SkillSummary } from '../api/types';
-import { sourceTail } from '../lib/format';
-import { confidenceLabel, confidenceTone, healthLabel, healthTone, hostKindLabel } from '../lib/labels';
-import { Badge } from './Badge';
+import { accessLabel, healthLabel, VERSION_LABELS } from '../lib/labels';
 
-export interface SkillRowProps {
+interface Props {
   item: SkillSummary;
   index: number;
   selected: boolean;
-  confidenceLabels: Record<string, string>;
+  busy: boolean;
   healthLabels: Record<string, string>;
-  onOpen: (identityKey: string) => void;
+  onOpen: (key: string) => void;
+  onFavorite: (item: SkillSummary) => void;
 }
 
-export function SkillRow({ item, index, selected, confidenceLabels, healthLabels, onOpen }: SkillRowProps) {
-  const claimed = item.provenance.label !== '';
-  const sourceText = claimed ? sourceTail(item.provenance.label) : '—';
-
+export function SkillRow({ item, index, selected, busy, healthLabels, onOpen, onFavorite }: Props) {
+  const version = item.versionStatus;
+  const status = version ? VERSION_LABELS[version.status] : item.mine ? '我写的' : item.upstream ? 'GitHub' : '待确认来源';
   return (
-    <li>
-      <button
-        type="button"
-        className={selected ? 'row is-current' : 'row'}
-        data-row-index={index}
-        aria-current={selected ? 'true' : undefined}
-        onClick={() => {
-          onOpen(item.identity_key);
-        }}
-      >
-        <span className="row-top">
-          <span className="row-name">{item.name}</span>
-          <Badge
-            tone={confidenceTone(item.provenance.confidence)}
-            title={`来源可信度：${confidenceLabel(item.provenance.confidence, confidenceLabels)}`}
-          >
-            {confidenceLabel(item.provenance.confidence, confidenceLabels)}
-          </Badge>
-        </span>
-        <span className={item.description === '' ? 'row-desc row-desc--empty' : 'row-desc'}>
-          {item.description === '' ? '无描述' : item.description}
-        </span>
-        <span className="row-foot">
-          <span
-            className={`row-source mono${claimed ? '' : ' is-unclaimed'}`}
-            title={claimed ? item.provenance.label : '没有任何机器记录能确定来源'}
-          >
-            {sourceText}
-          </span>
-          {item.host_kinds.map((kind) => (
-            <span className="chip" key={kind}>
-              {hostKindLabel(kind)}
-            </span>
-          ))}
-          {item.health
-            .filter((kind) => kind !== 'unclaimed_source')
-            .map((kind) => (
-              <span className={`chip chip--${healthTone(kind)}`} key={kind}>
-                {healthLabel(kind, healthLabels)}
-              </span>
-            ))}
-        </span>
+    <li className={selected ? 'skill-entry is-current' : 'skill-entry'}>
+      <button type="button" className="row" data-row-index={index} aria-current={selected || undefined}
+        onClick={() => onOpen(item.identity_key)}>
+        <span className="row-top"><strong className="row-name">{item.name}</strong><span className="row-status">{status}</span></span>
+        <span className="row-desc">{item.description || '无描述'}</span>
+        <span className="row-foot">{item.access.map(accessLabel).join('、') || 'Agent 范围待确认'}</span>
+        {item.health.filter(kind => kind !== 'unclaimed_source').map(kind =>
+          <span className="row-issue" key={kind}>{healthLabel(kind, healthLabels)}</span>)}
       </button>
+      <button type="button" className="row-star" aria-label={(item.favorite ? '取消收藏 ' : '收藏 ') + item.name}
+        aria-pressed={item.favorite} disabled={busy} onClick={() => onFavorite(item)}>{item.favorite ? '★' : '☆'}</button>
     </li>
   );
 }
