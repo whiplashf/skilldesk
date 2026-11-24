@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react';
 import { api } from '../api/endpoints';
 import { ApiError, describeError } from '../api/client';
 import type { AssetChanges, SkillDetail as Detail, SkillSummary } from '../api/types';
-import { accessLabel, healthLabel, VERSION_LABELS } from '../lib/labels';
+import { accessSummary, healthLabel, VERSION_LABELS } from '../lib/labels';
 import { formatDateTime } from '../lib/format';
-import { HASH, libraryHref } from '../lib/route';
+import { HASH } from '../lib/route';
 import { useApi } from '../lib/useApi';
 import { ErrorState } from './ErrorState';
 import { DetailSkeleton } from './Skeleton';
@@ -47,11 +47,12 @@ function OriginEditor({ data, save, busy }: { data: Detail; save: Save; busy: bo
 }
 
 interface Props {
+  backHref: string;
   identityKey: string; generation: string; busy: boolean; onSave: Save;
   onFile: (target: DocumentTarget) => void; onVersion: () => void;
 }
 
-export function SkillDetail({ identityKey, generation, busy, onSave, onFile, onVersion }: Props) {
+export function SkillDetail({ identityKey, generation, backHref, busy, onSave, onFile, onVersion }: Props) {
   const detail = useApi(signal => api.skill(identityKey, signal), [identityKey, generation], true);
   const files = useApi(signal => api.files(identityKey, signal), [identityKey, generation], true);
   const [translation, setTranslation] = useState<{ hash: string; html: string }>();
@@ -62,7 +63,7 @@ export function SkillDetail({ identityKey, generation, busy, onSave, onFile, onV
   const [checking, setChecking] = useState(false);
   const [versionError, setVersionError] = useState('');
   if (detail.state.status === 'loading') return <DetailSkeleton />;
-  if (detail.state.status === 'error') return <div className="detail"><a href={libraryHref()}>← 返回列表</a>
+  if (detail.state.status === 'error') return <div className="detail"><a href={backHref}>← 返回列表</a>
     <ErrorState message={detail.state.error} onRetry={detail.reload} /></div>;
   const item = detail.state.data;
   const status = item.versionStatus;
@@ -85,10 +86,11 @@ export function SkillDetail({ identityKey, generation, busy, onSave, onFile, onV
     finally { setChecking(false); }
   }
   return <article className="detail">
-    <a className="detail-back" href={libraryHref()}>← 返回列表</a>
+    <a className="detail-back" href={backHref}>← 返回列表</a>
     <header className="reader-heading">
-      <div><h1 className="detail-name">{item.name}</h1>
-        <p className="reader-access">{item.access.map(accessLabel).join('、') || 'Agent 范围待确认'}</p></div>
+      <div><p className="reader-repo" title={item.repository.location}><i className="folder-icon" aria-hidden="true" />{item.repository.name}</p>
+        <h1 className="detail-name">{item.name}</h1>
+        <p className="reader-access">{accessSummary(item.access)}</p></div>
       <button className="button star-action" type="button" aria-pressed={item.favorite} disabled={busy}
         onClick={() => void onSave(item, { favorite: !item.favorite })}>{item.favorite ? '★ 已收藏' : '☆ 收藏'}</button>
     </header>

@@ -4,7 +4,7 @@ import { api } from './api/endpoints';
 import { EmptyState } from './components/EmptyState';
 import { TopBar } from './components/TopBar';
 import { isTypingTarget } from './lib/dom';
-import { HASH, isLibrarySurface, navigate, skillHash, useHashRoute } from './lib/route';
+import { HASH, isLibrarySurface, navigate, skillHash, useHashRoute, type LibraryPosition } from './lib/route';
 import { focusSearch } from './lib/searchFocus';
 import { useThemePref } from './lib/theme';
 import { useApi } from './lib/useApi';
@@ -47,8 +47,8 @@ export function App() {
     };
   }, [route]);
 
-  const openSkill = (identityKey: string) => {
-    navigate(skillHash(identityKey));
+  const openSkill = (identityKey: string, position?: LibraryPosition) => {
+    navigate(skillHash(identityKey, position));
   };
 
   return (

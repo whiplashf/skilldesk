@@ -66,6 +66,9 @@ CREATE TABLE provenance(
     path TEXT NOT NULL,
     ref TEXT NOT NULL,
     tree TEXT NOT NULL,
+    local_root TEXT NOT NULL,
+    checkout_remote TEXT NOT NULL,
+    provider TEXT NOT NULL,
     confidence TEXT NOT NULL,
     evidence TEXT NOT NULL
 );
@@ -159,7 +162,8 @@ def rebuild(result: ScanResult, issues: list[Issue], path: Path | str | None = N
             ],
         )
         conn.executemany(
-            "INSERT INTO provenance(identity_key, host, repo, path, ref, tree, confidence, evidence) VALUES (?,?,?,?,?,?,?,?)",
+            "INSERT INTO provenance(identity_key, host, repo, path, ref, tree, local_root, checkout_remote, "
+            "provider, confidence, evidence) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             [
                 (
                     skill.identity_key,
@@ -168,6 +172,9 @@ def rebuild(result: ScanResult, issues: list[Issue], path: Path | str | None = N
                     skill.provenance.path,
                     skill.provenance.ref,
                     skill.provenance.tree,
+                    skill.provenance.local_root,
+                    skill.provenance.checkout_remote,
+                    skill.provenance.provider,
                     skill.provenance.confidence,
                     skill.provenance.evidence,
                 )
@@ -251,7 +258,7 @@ def counts(conn: sqlite3.Connection) -> dict[str, int]:
 _ITEM_SQL = """
 SELECT s.identity_key, s.name, s.dir_name, s.description, s.license, s.content_hash,
        s.bytes, s.lines, s.mtime, s.realpath, s.primary_kind,
-       p.host, p.repo, p.path, p.ref, p.tree, p.confidence, p.evidence,
+       p.host, p.repo, p.path, p.ref, p.tree, p.local_root, p.checkout_remote, p.provider, p.confidence, p.evidence,
        (SELECT json_group_array(DISTINCT json_object('agent', a.agent, 'scope', a.scope))
         FROM placement pl JOIN agent_access a ON pl.host_root = a.host_root
         WHERE pl.identity_key = s.identity_key) AS access,
@@ -286,6 +293,9 @@ def _row_to_item(row: sqlite3.Row) -> dict[str, Any]:
             "path": row["path"] if "path" in keys else "",
             "ref": row["ref"] if "ref" in keys else "",
             "tree": row["tree"] or "",
+            "localRoot": row["local_root"] or "",
+            "checkoutRemote": row["checkout_remote"] or "",
+            "provider": row["provider"] or "",
             "confidence": (row["confidence"] if "confidence" in keys else "") or "none",
             "evidence": row["evidence"] if "evidence" in keys else "",
             "label": _provenance_label(row, keys),
@@ -303,6 +313,71 @@ def _provenance_label(row: sqlite3.Row, keys: set[str]) -> str:
     return f"{host}/{repo}" if host else repo
 
 
+def repository_for(provenance: sqlite3.Row | dict, asset: dict) -> dict[str, str]:
+    """Resolve the same effective repository for the directory and the reader."""
+    host, repo = provenance["host"], provenance["repo"]
+    if asset.get("github"):
+        host, repo = "github.com", asset["github"]["repo"]
+    elif provenance["checkoutRemote"]:
+        host, _, repo = provenance["checkoutRemote"].partition("/")
+    elif provenance["provider"] in {"well-known", "mintlify"}:
+        host, repo = "", ""
+    if host and repo:
+        host = host.lower()
+        if host == "github.com":
+            repo = "/".join(repo.strip("/").split("/")[:2]).removesuffix(".git")
+        key = repo.lower() if host == "github.com" else repo
+        return {"key": f"{host}/{key}", "name": repo, "location": host}
+    local_root = provenance["localRoot"]
+    if local_root:
+        return {"key": f"local:{local_root}", "name": Path(local_root).name or local_root, "location": local_root}
+    return {"key": "unassigned", "name": "未关联仓库", "location": ""}
+
+
+def _repository_page(
+    conn: sqlite3.Connection, clause: str, params: list, assets: dict,
+    repository: str, focus: str, limit: int, offset: int,
+) -> dict[str, Any]:
+    # Group the complete filtered inventory first. Only the active group's page needs full skill records.
+    rows = conn.execute(
+        "SELECT s.identity_key, p.host, p.repo, p.local_root AS localRoot, p.checkout_remote AS checkoutRemote, "
+        "p.provider FROM skill s "
+        "JOIN provenance p USING(identity_key)" + clause + " ORDER BY s.name COLLATE NOCASE, s.identity_key",
+        params,
+    )
+    groups: dict[str, dict] = {}
+    focus_group = ""
+    for row in rows:
+        identity = row["identity_key"]
+        repo = repository_for(row, assets.get(identity, {}))
+        group = groups.setdefault(repo["key"], {**repo, "members": []})
+        group["members"].append(identity)
+        if identity == focus:
+            focus_group = repo["key"]
+    ordered = sorted(groups.values(), key=lambda g: (g["key"] == "unassigned", g["name"].casefold(), g["key"]))
+    active = focus_group or (repository if repository in groups else next((g["key"] for g in ordered), ""))
+    members = groups[active]["members"] if active else []
+    if focus_group:
+        offset = members.index(focus) // limit * limit
+    elif repository and repository != active:
+        offset = 0
+    offset = min(offset, max(0, (len(members) - 1) // limit * limit))
+    page_ids = members[offset:offset + limit]
+    items = conn.execute(
+        _ITEM_SQL + " WHERE s.identity_key IN (SELECT value FROM json_each(?)) ORDER BY s.name COLLATE NOCASE, s.identity_key",
+        [json.dumps(page_ids)],
+    )
+    return {
+        "items": [_row_to_item(row) for row in items],
+        "total": len(members), "limit": limit, "offset": offset, "activeRepository": active,
+        "matchedTotal": sum(len(g["members"]) for g in ordered),
+        "repositories": [
+            {"key": g["key"], "name": g["name"], "location": g["location"], "count": len(g["members"])}
+            for g in ordered
+        ],
+    }
+
+
 def list_skills(
     conn: sqlite3.Connection,
     *,
@@ -314,6 +389,9 @@ def list_skills(
     agent: str = "",
     view: str = "all",
     assets: dict | None = None,
+    by_repository: bool = False,
+    repository: str = "",
+    focus: str = "",
     limit: int = 50,
     offset: int = 0,
 ) -> dict[str, Any]:
@@ -351,6 +429,8 @@ def list_skills(
         params.append(health)
 
     clause = (" WHERE " + " AND ".join(where)) if where else ""
+    if by_repository:
+        return _repository_page(conn, clause, params, annotations, repository, focus, limit, offset)
     total = conn.execute(
         "SELECT count(*) FROM skill s LEFT JOIN provenance p ON p.identity_key = s.identity_key" + clause,
         params,

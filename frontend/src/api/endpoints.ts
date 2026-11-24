@@ -14,6 +14,9 @@ import type {
 export interface SkillQuery {
   agent?: string;
   view?: string;
+  byRepository?: boolean;
+  repository?: string;
+  focus?: string;
   q?: string;
   host?: string;
   source?: string;
@@ -49,6 +52,9 @@ export const api = {
       withQuery('/api/index', {
         agent: query.agent,
         view: query.view,
+        by_repository: query.byRepository,
+        repository: query.repository,
+        focus: query.focus,
         q: query.q,
         host: query.host,
         source: query.source,

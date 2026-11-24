@@ -19,7 +19,7 @@ import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from .config import home
 
@@ -45,6 +45,9 @@ class Provenance:
     confidence: str = NONE
     evidence: str = ""
     tree: str = ""
+    local_root: str = ""
+    checkout_remote: str = ""
+    provider: str = ""
 
     @property
     def label(self) -> str:
@@ -154,11 +157,15 @@ def infer_provenance(dir_name: str, real_dir: str, frontmatter: dict, lock: dict
     if declared and declared != dir_name:
         names.append(declared)
 
+    local_source = None
     for name in names:
         entry = lock.get(name)
         if not entry:
             continue
         source = str(entry.get("sourceUrl") or entry.get("source") or "")
+        if entry.get("sourceType") == "local":
+            local_source = _local_source_root(source)
+            continue
         if entry.get("sourceType") == "github" and re.fullmatch(r"[\w.-]+/[\w.-]+", source):
             source = "https://github.com/" + source
         normalized = normalize_source(source)
@@ -174,22 +181,20 @@ def infer_provenance(dir_name: str, real_dir: str, frontmatter: dict, lock: dict
             confidence=RECORDED,
             evidence="lockfile",
             tree=digest if re.fullmatch(r"[0-9a-f]{40}", digest) else "",
+            provider=str(entry.get("sourceType") or ""),
         )
 
     # A checked-out skill supplies both a repository and its exact folder.
     directory = Path(real_dir)
-    checkout = next((parent for parent in (directory, *directory.parents) if (parent / ".git").exists()), None)
-    if checkout:
+    checkout = _checkout_root(directory)
+    if checkout and (not local_source or checkout == local_source):
         try:
-            def git(*args: str) -> str:
-                return subprocess.check_output(["git", "-C", str(checkout), *args], text=True,
-                                               stderr=subprocess.DEVNULL, timeout=2).strip()
             tracked_path = (directory / "SKILL.md").relative_to(checkout).as_posix()
-            git("cat-file", "-e", "HEAD:" + tracked_path)
-            origin = normalize_source(git("config", "--get", "remote.origin.url"))
+            _git(checkout, "cat-file", "-e", "HEAD:" + tracked_path)
+            origin = normalize_source(_git(checkout, "config", "--get", "remote.origin.url"))
             if origin:
                 return Provenance(origin[0], origin[1], tracked_path,
-                                  git("rev-parse", "HEAD"), RECORDED, "git checkout")
+                                  _git(checkout, "rev-parse", "HEAD"), RECORDED, "git checkout", local_root=str(checkout))
         except (OSError, subprocess.SubprocessError):
             pass
 
@@ -212,7 +217,39 @@ def infer_provenance(dir_name: str, real_dir: str, frontmatter: dict, lock: dict
     if normalized:
         return Provenance(host=normalized[0], repo=normalized[1], confidence=DECLARED, evidence="frontmatter")
 
+    root = local_source or checkout
+    if root:
+        # An untracked document belongs to the checkout, but has no published revision to compare.
+        try:
+            remote = normalize_source(_git(root, "config", "--get", "remote.origin.url"))
+        except (OSError, subprocess.SubprocessError):
+            remote = None
+        return Provenance(local_root=str(root), checkout_remote="/".join(remote) if remote else "")
     return Provenance()
+
+
+def _checkout_root(directory: Path) -> Path | None:
+    return next((parent for parent in (directory, *directory.parents) if (parent / ".git").exists()), None)
+
+
+def _local_source_root(source: str) -> Path | None:
+    if source.startswith("file://"):
+        try:
+            url = urlparse(source)
+        except ValueError:
+            return None
+        if url.netloc not in {"", "localhost"}:
+            return None
+        source = unquote(url.path)
+    path = Path(os.path.expanduser(source))
+    if path.is_absolute() and path.exists():
+        return _checkout_root(path.resolve())
+    return None
+
+
+def _git(checkout: Path, *args: str) -> str:
+    return subprocess.check_output(["git", "-C", str(checkout), *args], text=True,
+                                   stderr=subprocess.DEVNULL, timeout=2).strip()
 
 
 def placement_fingerprint(real_dir: str) -> str:

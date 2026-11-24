@@ -1,26 +1,27 @@
 import type { SkillSummary } from '../api/types';
-import { accessLabel, healthLabel, VERSION_LABELS } from '../lib/labels';
+import { accessSummary, healthLabel, VERSION_LABELS } from '../lib/labels';
 
 interface Props {
   item: SkillSummary;
   index: number;
   selected: boolean;
   busy: boolean;
+  grouped: boolean;
   healthLabels: Record<string, string>;
   onOpen: (key: string) => void;
   onFavorite: (item: SkillSummary) => void;
 }
 
-export function SkillRow({ item, index, selected, busy, healthLabels, onOpen, onFavorite }: Props) {
+export function SkillRow({ item, index, selected, busy, grouped, healthLabels, onOpen, onFavorite }: Props) {
   const version = item.versionStatus;
-  const status = version ? VERSION_LABELS[version.status] : item.mine ? '我写的' : item.upstream ? 'GitHub' : '待确认来源';
+  const status = version ? VERSION_LABELS[version.status] : grouped ? '' : item.mine ? '我写的' : item.upstream ? 'GitHub' : '待确认来源';
   return (
     <li className={selected ? 'skill-entry is-current' : 'skill-entry'}>
       <button type="button" className="row" data-row-index={index} aria-current={selected || undefined}
         onClick={() => onOpen(item.identity_key)}>
-        <span className="row-top"><strong className="row-name">{item.name}</strong><span className="row-status">{status}</span></span>
+        <span className="row-top"><strong className="row-name">{item.name}</strong>{status && <span className="row-status">{status}</span>}</span>
         <span className="row-desc">{item.description || '无描述'}</span>
-        <span className="row-foot">{item.access.map(accessLabel).join('、') || 'Agent 范围待确认'}</span>
+        <span className="row-foot">{accessSummary(item.access)}</span>
         {item.health.filter(kind => kind !== 'unclaimed_source').map(kind =>
           <span className="row-issue" key={kind}>{healthLabel(kind, healthLabels)}</span>)}
       </button>

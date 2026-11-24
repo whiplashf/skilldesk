@@ -97,9 +97,17 @@ export function fileKindLabel(kind: SupportFileKind): string {
   return FILE_KIND_LABELS[kind];
 }
 
-export function accessLabel(access: { agent: string; scope: string }): string {
-  const project = access.scope.split(/[\\/]/).filter(Boolean).pop();
-  return hostKindLabel(access.agent) + (project ? ' · ' + project + ' 项目' : ' · 全局');
+export function accessSummary(access: { agent: string; scope: string }[]): string {
+  const scopes = new Map<string, string[]>();
+  for (const { agent, scope } of access) {
+    const agents = scopes.get(scope) ?? [];
+    agents.push(hostKindLabel(agent));
+    scopes.set(scope, agents);
+  }
+  return Array.from(scopes, ([scope, agents]) => {
+    const project = scope.split(/[\\/]/).filter(Boolean).pop();
+    return agents.join('、') + (project ? ' · ' + project + ' 项目' : ' · 全局');
+  }).join(' / ') || 'Agent 范围待确认';
 }
 
 export const VERSION_LABELS = {

@@ -5,21 +5,20 @@ import type { AssetChanges, SkillSummary } from '../api/types';
 import { FileOverlay } from '../components/FileOverlay';
 import { FacetGroups } from '../components/FilterRail';
 import { SkillList } from '../components/SkillList';
+import { LibraryNavigation, libraryViews } from '../components/LibraryNavigation';
 import { SkillDetail } from '../components/SkillDetail';
 import type { DocumentTarget } from '../components/SkillBody';
 import { isTypingTarget } from '../lib/dom';
 import { hasActiveFilters, type FacetAxis, type Filters } from '../lib/filters';
 import { hostKindLabel } from '../lib/labels';
-import { libraryHref, libraryParams, navigate, updateLibraryParams } from '../lib/route';
+import { libraryHref, libraryParams, navigate, updateLibraryParams, type LibraryPosition } from '../lib/route';
 import { registerSearchFocus } from '../lib/searchFocus';
 import { useApi } from '../lib/useApi';
 import { useDebounced } from '../lib/useDebounced';
 
-const views = [['all', '全部'], ['github', 'GitHub 引入'], ['mine', '我写的'], ['favorites', '已收藏']] as const;
-
 interface Props {
   selectedKey: string | null;
-  onOpenSkill: (key: string) => void;
+  onOpenSkill: (key: string, position?: LibraryPosition) => void;
   generation: string;
   onScanned: () => void;
 }
@@ -28,6 +27,9 @@ export function LibraryPage({ selectedKey, onOpenSkill, generation, onScanned }:
   const params = libraryParams();
   const view = params.get('view') || 'all';
   const agent = params.get('agent') || '';
+  const layout = params.get('layout');
+  const grouped = layout ? layout === 'repository' : view === 'github' || view === 'mine';
+  const repository = params.get('repo') || '';
   const filters: Filters = { q: params.get('q') || '', host: params.get('host') || '', source: params.get('source') || '',
     confidence: params.get('confidence') || '', health: params.get('health') || '' };
   const page = Math.max(0, Number.parseInt(params.get('page') || '1', 10) - 1 || 0);
@@ -45,8 +47,17 @@ export function LibraryPage({ selectedKey, onOpenSkill, generation, onScanned }:
   const lastPreview = useRef<string | null>(null);
   const query = params.toString();
   const facets = useApi(signal => api.facets(signal), [generation, epoch], true);
-  const list = useApi(signal => api.index({ ...filters, q: search, agent, view, limit: PAGE_SIZE, offset: page * PAGE_SIZE }, signal),
-    [search, agent, view, filters.host, filters.source, filters.confidence, filters.health, page, generation, epoch]);
+  const focus = grouped ? selectedKey || '' : '';
+  const list = useApi(signal => api.index({
+    ...filters, q: search, agent, view, byRepository: grouped, repository: grouped ? repository : '',
+    focus, limit: PAGE_SIZE, offset: page * PAGE_SIZE,
+  }, signal), [search, agent, view, grouped, repository, focus, filters.host, filters.source,
+    filters.confidence, filters.health, page, generation, epoch], true);
+  const data = list.state.status === 'ready' ? list.state.data : null;
+  const groups = data?.repositories ?? [];
+  const activeGroup = groups.find(group => group.key === data?.activeRepository);
+  const displayedPage = grouped && data ? Math.floor(data.offset / PAGE_SIZE) : page;
+  const position = grouped && activeGroup ? { repo: activeGroup.key, page: displayedPage } : undefined;
   const items = list.state.status === 'ready' ? list.state.data.items : [];
   const first = list.state.status === 'loading' ? lastPreview.current : items[0]?.identity_key ?? null;
   const preview = selectedKey ?? first;
@@ -58,16 +69,25 @@ export function LibraryPage({ selectedKey, onOpenSkill, generation, onScanned }:
   useEffect(() => { sessionStorage.setItem('skilldesk.library-query', query); }, [query]);
   useEffect(() => { if (list.state.status === 'ready') lastPreview.current = list.state.data.items[0]?.identity_key ?? null; }, [list.state]);
   useEffect(() => {
-    if (list.state.status === 'ready' && page && list.state.data.total <= page * PAGE_SIZE) {
+    if (!grouped && list.state.status === 'ready' && page && list.state.data.total <= page * PAGE_SIZE) {
       const last = Math.max(1, Math.ceil(list.state.data.total / PAGE_SIZE));
       updateLibraryParams({ page: last > 1 ? String(last) : '' });
     }
-  }, [list.state, page]);
+  }, [list.state, page, grouped]);
   useEffect(() => { setFiles([]); detailPane.current?.scrollTo({ top: 0 }); }, [preview]);
   useEffect(() => registerSearchFocus(() => { searchInput.current?.focus(); searchInput.current?.select(); }), []);
 
   function change(key: string, value: string) {
-    setMessage(''); updateLibraryParams({ [key]: value, page: '' });
+    setMessage('');
+    updateLibraryParams({ [key]: value, page: '', ...(key === 'view' ? { repo: '', layout: '' } : {}) });
+  }
+  function changeLayout(next: boolean) {
+    if (next === grouped) return;
+    setMessage('');
+    updateLibraryParams({ layout: next ? 'repository' : 'flat', repo: '', page: '' });
+  }
+  function openSkill(key: string) {
+    onOpenSkill(key, position);
   }
   function toggle(axis: FacetAxis, value: string) { change(axis, filters[axis] === value ? '' : value); }
   function clear() { setMessage(''); updateLibraryParams({}, true); }
@@ -126,7 +146,7 @@ export function LibraryPage({ selectedKey, onOpenSkill, generation, onScanned }:
       if (event.key === 'Escape') {
         if (files.length) setFiles(current => current.slice(0, -1));
         else if (advanced.current?.open) advanced.current.open = false;
-        else if (selectedKey) navigate(libraryHref());
+        else if (selectedKey) navigate(libraryHref(position));
         else if (hasFilters) clear();
         else return;
         event.preventDefault(); return;
@@ -137,7 +157,7 @@ export function LibraryPage({ selectedKey, onOpenSkill, generation, onScanned }:
       if (event.key === '/' && !inSearch) { event.preventDefault(); searchInput.current?.focus(); return; }
       const rows = Array.from(listColumn.current?.querySelectorAll<HTMLButtonElement>('button[data-row-index]') ?? []);
       if (inSearch && event.key === 'Enter' && search === filters.q && items[0]) {
-        event.preventDefault(); onOpenSkill(items[0].identity_key); searchInput.current?.blur(); return;
+        event.preventDefault(); openSkill(items[0].identity_key); searchInput.current?.blur(); return;
       }
       if (inSearch && !['ArrowUp', 'ArrowDown'].includes(event.key)) return;
       const down = event.key === 'ArrowDown' || event.key === 'j';
@@ -153,20 +173,22 @@ export function LibraryPage({ selectedKey, onOpenSkill, generation, onScanned }:
   const facetData = facets.state.status === 'ready' ? facets.state.data : null;
   const openFile = (target: DocumentTarget) => setFiles(current => [...current, target]);
   return <div className={'library-workspace' + (selectedKey ? ' reading' : '')}>
+    <LibraryNavigation view={view} grouped={grouped} active={activeGroup?.key || ''} repositories={groups}
+      loading={list.state.status === 'loading'} onView={id => change('view', id === 'all' ? '' : id)}
+      onLayout={changeLayout} onRepository={key => change('repo', key)} />
     <header className="library-tools">
       <div className="library-search-line">
-        <input aria-label="搜索本机 skill" type="search" ref={searchInput} placeholder="搜索名称或用途"
-          value={filters.q} onChange={e => change('q', e.target.value)} />
+        <div className="search-field">
+          <i className="search-icon" aria-hidden="true" />
+          <input aria-label="搜索本机 skill" type="search" ref={searchInput} placeholder="搜索名称或用途"
+            value={filters.q} onChange={e => change('q', e.target.value)} /><kbd aria-hidden="true">/</kbd>
+        </div>
         <label>可用 Agent <select aria-label="可用 Agent" value={agent} onChange={e => change('agent', e.target.value)}>
           <option value="">全部 Agent</option>
           {(facetData?.agents ?? []).map(a => <option key={a.value} value={a.value}>{hostKindLabel(a.value)}</option>)}
         </select></label>
-      </div>
-      <div className="library-views" role="group" aria-label="查看范围">
-        {views.map(([id, label]) => <button type="button" key={id} aria-pressed={view === id}
-          onClick={() => change('view', id === 'all' ? '' : id)}>{label}</button>)}
         {view === 'github' && items.some(item => item.upstream?.path) &&
-          <button type="button" className="check-updates" disabled={checkingPage} onClick={() => void checkPage()}>
+          <button type="button" className="button check-updates" disabled={checkingPage} onClick={() => void checkPage()}>
             {checkingPage ? '正在检查…' : '检查本页版本'}</button>}
         <details ref={advanced} className="advanced"><summary>{hasAdvanced ? '已筛选' : '更多筛选'}</summary>
           <div className="facet-popover">{facetData ? <FacetGroups facets={facetData} filters={filters} onToggleFacet={toggle} />
@@ -178,14 +200,17 @@ export function LibraryPage({ selectedKey, onOpenSkill, generation, onScanned }:
     </header>
     <div className="library-panes">
       <div className="list-column" ref={listColumn}>
-        <SkillList state={list.state} page={page} pageSize={PAGE_SIZE} selectedKey={preview} busy={busy}
+        <SkillList view={view} state={list.state} page={displayedPage} pageSize={PAGE_SIZE} selectedKey={preview} busy={busy}
+          title={activeGroup?.name || libraryViews.find(option => option.id === view)?.label || '全部'}
+          grouped={grouped}
           hasFilters={hasFilters} healthLabels={facetData?.healthLabels ?? {}}
-          onFavorite={item => void save(item, { favorite: !item.favorite })} onOpenSkill={onOpenSkill}
-          onPageChange={n => updateLibraryParams({ page: n > 0 ? String(n + 1) : '' })}
+          onFavorite={item => void save(item, { favorite: !item.favorite })} onOpenSkill={openSkill}
+          onPageChange={n => updateLibraryParams({ page: n > 0 ? String(n + 1) : '', repo: activeGroup?.key || '' })}
           onClearFilters={clear} onRefresh={() => void rescan()} />
       </div>
       <div className="detail-pane" ref={detailPane}>{preview && <SkillDetail key={preview} identityKey={preview}
-        generation={generation + '-' + epoch} busy={busy} onSave={save} onFile={openFile} onVersion={refreshData} />}</div>
+        generation={generation + '-' + epoch} backHref={libraryHref(position)} busy={busy}
+        onSave={save} onFile={openFile} onVersion={refreshData} />}</div>
     </div>
     {file && preview && <FileOverlay key={file.rel} skillKey={preview} rel={file.rel} anchor={file.anchor} raw={file.raw} onFile={openFile}
       onClose={() => setFiles(current => current.slice(0, -1))} />}

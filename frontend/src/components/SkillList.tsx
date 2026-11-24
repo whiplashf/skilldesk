@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import type { IndexResponse, SkillSummary } from '../api/types';
 import { formatCount } from '../lib/format';
 import { HASH } from '../lib/route';
@@ -9,6 +10,9 @@ import { Pagination } from './Pagination';
 import { SkillRow } from './SkillRow';
 
 export interface SkillListProps {
+  title: string;
+  view: string;
+  grouped: boolean;
   state: AsyncState<IndexResponse>;
   page: number;
   pageSize: number;
@@ -24,6 +28,9 @@ export interface SkillListProps {
 }
 
 export function SkillList({
+  title,
+  view,
+  grouped,
   state,
   page,
   pageSize,
@@ -37,30 +44,24 @@ export function SkillList({
   onClearFilters,
   onRefresh,
 }: SkillListProps) {
+  const scroll = useRef<HTMLDivElement>(null);
+  const firstKey = state.data?.items[0]?.identity_key;
+  useEffect(() => { scroll.current?.scrollTo({ top: 0 }); }, [firstKey, page, title]);
   return (
     <section className="list-pane" aria-label="skill 列表">
       <header className="pane-head">
-        {state.status === 'ready' ? (
-          <span className="pane-count">
-            {hasFilters ? (
-              <>
-                筛选命中 <span className="mono">{formatCount(state.data.total)}</span> 个
-              </>
-            ) : (
-              <>
-                共 <span className="mono">{formatCount(state.data.total)}</span> 个
-              </>
-            )}
-          </span>
-        ) : (
-          <Skeleton width="96px" height={10} />
-        )}
+        <div className="inventory-heading">
+          <h2>{title === '全部' ? '全部技能' : title}</h2>
+          {state.status === 'ready'
+            ? <span className="pane-count">{grouped ? '本组' : '共'} {formatCount(state.data.total)} 个 skill</span>
+            : <Skeleton width="60px" height={10} />}
+        </div>
         <button type="button" className="icon-button" title="重新扫描本机" aria-label="重新扫描本机" disabled={busy} onClick={onRefresh}>
           ↻
         </button>
       </header>
 
-      <div className="rows-scroll">
+      <div className="rows-scroll" ref={scroll}>
         {state.status === 'loading' ? <ListSkeleton rows={9} /> : null}
 
         {state.status === 'error' ? <ErrorState message={state.error} onRetry={onRefresh} /> : null}
@@ -68,9 +69,9 @@ export function SkillList({
         {state.status === 'ready' && state.data.items.length === 0 ? (
           hasFilters ? (
             <EmptyState
-              title="没有匹配的 skill"
-              hint="当前筛选条件下没有任何结果。"
-              actionLabel="清空筛选"
+              title={view === 'mine' ? '当前范围没有自写 skill' : '没有匹配的 skill'}
+              hint={view === 'mine' ? '在「全部」中打开你写的 skill，展开「来源与可用范围」并勾选「我写的」。' : '当前筛选条件下没有任何结果。'}
+              actionLabel={view === 'mine' ? '查看全部技能' : '清空筛选'}
               onAction={onClearFilters}
             />
           ) : (
@@ -92,6 +93,7 @@ export function SkillList({
                 index={index}
                 selected={item.identity_key === selectedKey}
                 busy={busy}
+                grouped={grouped}
                 onFavorite={onFavorite}
                 healthLabels={healthLabels}
                 onOpen={onOpenSkill}
@@ -101,7 +103,7 @@ export function SkillList({
         ) : null}
       </div>
 
-      {state.status === 'ready' && state.data.items.length > 0 ? (
+      {state.status === 'ready' && state.data.total > pageSize ? (
         <Pagination page={page} pageSize={pageSize} total={state.data.total} onPageChange={onPageChange} />
       ) : null}
     </section>

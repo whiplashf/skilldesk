@@ -51,7 +51,7 @@ export function FacetGroups({
         ))}
       </FacetGroup>
 
-      <FacetGroup title="来源" hint="host/repo" scroll>
+      <FacetGroup title="扫描来源" hint="host/repo" scroll>
         {facets.sources.map((facet) => (
           <FacetRow
             key={`source:${facet.value}`}

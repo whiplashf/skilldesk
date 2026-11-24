@@ -13,6 +13,7 @@ export interface Provenance {
   ref: string;
   confidence: ConfidenceValue;
   evidence: string;
+  localRoot: string;
   label: string;
 }
 
@@ -32,6 +33,7 @@ export interface AISettings {
 export interface AssetChanges { favorite?: boolean; mine?: boolean; github?: GitHubSource | null }
 
 export interface SkillSummary {
+  repository: Repository;
   access: { agent: string; scope: string }[];
   favorite: boolean;
   mine: boolean;
@@ -119,11 +121,24 @@ export interface Facets {
   healthLabels: Record<string, string>;
 }
 
+export interface Repository {
+  key: string;
+  name: string;
+  location: string;
+}
+
+export interface RepositoryGroup extends Repository {
+  count: number;
+}
+
 export interface IndexResponse {
   items: SkillSummary[];
   total: number;
   limit: number;
   offset: number;
+  repositories?: RepositoryGroup[];
+  activeRepository?: string;
+  matchedTotal?: number;
 }
 
 /** `meta` numbers are serialised as strings by the server. */

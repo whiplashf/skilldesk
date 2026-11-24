@@ -17,13 +17,21 @@ export function libraryParams(): URLSearchParams {
   return new URLSearchParams(window.location.hash.split('?')[1] ?? '');
 }
 
-function librarySuffix(): string {
+export interface LibraryPosition { repo: string; page: number }
+
+function librarySuffix(position?: LibraryPosition): string {
   const onLibrary = /^#\/(library|skill)(\/|\?|$)/.test(window.location.hash);
-  return onLibrary ? libraryParams().toString() : sessionStorage.getItem('skilldesk.library-query') ?? '';
+  const params = onLibrary ? libraryParams() : new URLSearchParams(sessionStorage.getItem('skilldesk.library-query') ?? '');
+  if (position) {
+    params.set('repo', position.repo);
+    if (position.page) params.set('page', String(position.page + 1));
+    else params.delete('page');
+  }
+  return params.toString();
 }
 
-export function libraryHref(): string {
-  const query = librarySuffix();
+export function libraryHref(position?: LibraryPosition): string {
+  const query = librarySuffix(position);
   return HASH.library + (query ? '?' + query : '');
 }
 
@@ -39,8 +47,8 @@ export function updateLibraryParams(changes: Record<string, string>, reset = fal
   window.dispatchEvent(new HashChangeEvent('hashchange'));
 }
 
-export function skillHash(identityKey: string): string {
-  const query = librarySuffix();
+export function skillHash(identityKey: string, position?: LibraryPosition): string {
+  const query = librarySuffix(position);
   return `#/skill/${encodeURIComponent(identityKey)}` + (query ? '?' + query : '');
 }
 

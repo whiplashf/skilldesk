@@ -242,7 +242,8 @@ def create_app(db_path: str | Path | None = None, *, remote_token: str | None = 
     def decorate(item, annotations):
         asset = annotations["assets"].get(item["identity_key"], {})
         source = upstream.source_for(item, asset)
-        item.update(favorite=bool(asset.get("favorite")), mine=bool(asset.get("mine")), upstream=source,
+        item.update(repository=index_mod.repository_for(item["provenance"], asset),
+                    favorite=bool(asset.get("favorite")), mine=bool(asset.get("mine")), upstream=source,
                     versionStatus=upstream.previous(item, source), libraryRevision=annotations["revision"])
         return item
 
@@ -365,6 +366,9 @@ def create_app(db_path: str | Path | None = None, *, remote_token: str | None = 
         q: str = "",
         agent: str = "",
         view: str = "all",
+        by_repository: bool = False,
+        repository: str = "",
+        focus: str = "",
         host: str = "",
         source: str = "",
         confidence: str = "",
@@ -378,6 +382,7 @@ def create_app(db_path: str | Path | None = None, *, remote_token: str | None = 
             result = index_mod.list_skills(
                 conn,
                 q=q, agent=agent, view=view, assets=annotations["assets"],
+                by_repository=by_repository, repository=repository, focus=focus,
                 host=host,
                 source=source,
                 confidence=confidence,

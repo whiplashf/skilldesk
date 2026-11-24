@@ -16,9 +16,13 @@ export function ProvenanceBlock({ provenance, confidenceLabel }: ProvenanceBlock
       <h3 className="block-title">来源</h3>
       <dl className="kv">
         <div className="kv-row">
-          <dt>来源</dt>
+          <dt>上游来源</dt>
           <dd>{claimed ? <span className="mono break">{provenance.label}</span> : <span className="dim">未认领</span>}</dd>
         </div>
+        {provenance.localRoot && <div className="kv-row">
+          <dt>本地仓库</dt>
+          <dd className="mono break">{provenance.localRoot}</dd>
+        </div>}
         <div className="kv-row">
           <dt>可信度</dt>
           <dd className="kv-inline">
@@ -39,7 +43,7 @@ export function ProvenanceBlock({ provenance, confidenceLabel }: ProvenanceBlock
           </div>
         )}
       </dl>
-      {claimed ? null : <p className="block-note">没有任何机器记录能确定来源，暂按待认领处理。</p>}
+      {claimed ? null : <p className="block-note">可以在上方关联 GitHub 仓库和文档路径，以便检查版本。</p>}
     </section>
   );
 }

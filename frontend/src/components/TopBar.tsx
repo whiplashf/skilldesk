@@ -1,5 +1,5 @@
 import type { Health } from '../api/types';
-import { formatCount, formatDateTime, formatRelative, toIsoString } from '../lib/format';
+import { formatDateTime, formatRelative, toIsoString } from '../lib/format';
 import { libraryHref, HASH, type Route } from '../lib/route';
 import type { AsyncState } from '../lib/useApi';
 import type { ThemePref } from '../lib/theme';
@@ -34,36 +34,23 @@ function IndexFreshness({ health, onRetry }: { health: AsyncState<Health>; onRet
     );
   }
 
-  const { meta, counts } = health.data;
+  const { meta } = health.data;
   return (
     <span className="freshness">
-      <span>索引更新于</span>
+      <span>上次扫描</span>
       <time title={formatDateTime(meta.scanned_at)} dateTime={toIsoString(meta.scanned_at)}>
         {formatRelative(meta.scanned_at)}
       </time>
-      <span className="freshness-sep" aria-hidden="true">
-        ·
-      </span>
-      <span className="mono">{formatCount(counts.skills)}</span>
-      <span>个 skill</span>
-      <span className="freshness-sep" aria-hidden="true">
-        ·
-      </span>
-      <span className="mono">{formatCount(counts.issues)}</span>
-      <span>个待处理</span>
     </span>
   );
 }
 
 export function TopBar({ route, health, onRetryHealth, themePref, onThemePrefChange }: TopBarProps) {
-  const version = health.status === 'ready' ? health.data.version : undefined;
-
   return (
     <header className="topbar">
       <a className="brand" href={libraryHref()}>
-        skilldesk
+        <span className="brand-mark" aria-hidden="true"><i /><i /><i /></span>skilldesk
       </a>
-      {version === undefined ? null : <span className="brand-version mono">v{version}</span>}
 
       <nav className="tabs" aria-label="主导航">
         {TABS.map((tab) => {
