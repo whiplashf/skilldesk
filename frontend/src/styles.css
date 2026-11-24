@@ -412,6 +412,9 @@ kbd {
 .reader-toolbar .button, .reader-heading .button, .section-heading .button { font-size: 12.5px; }
 .translate-action, .reader-fold > summary { color: var(--accent); }
 .reader-section, .reader-fold { padding: 12px 0; border-top: 1px solid var(--line); }
+.reader-section { padding: 6px 0; border-top: 0; }
+.reader-section .section-heading small { color: var(--ink-2); font-weight: 400; }
+.reader-fold:has(+ .reader-body) { padding: 7px 0; border-bottom: 1px solid var(--line); }
 .section-heading h2, .reader-fold > summary { font-size: 14px; font-weight: 600; margin: 0; }
 .reader-fold > summary { cursor: pointer; }
 .version-result { display: flex; align-items: baseline; flex-wrap: wrap; gap: 5px 12px; margin-top: 8px; }
