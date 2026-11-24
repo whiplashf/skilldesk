@@ -1,0 +1,62 @@
+import { getJson, withQuery } from './client';
+import type {
+  Facets,
+  FileContent,
+  FilesResponse,
+  Health,
+  IndexResponse,
+  IssuesResponse,
+  RootsResponse,
+  SkillDetail,
+} from './types';
+
+export interface SkillQuery {
+  q?: string;
+  host?: string;
+  source?: string;
+  confidence?: string;
+  health?: string;
+  limit: number;
+  offset: number;
+}
+
+export const PAGE_SIZE = 50;
+
+/** `identity_key` contains `:`, `/` and `@`, so it is always percent-encoded as one segment. */
+function skillPath(identityKey: string): string {
+  return `/api/skill/${encodeURIComponent(identityKey)}`;
+}
+
+export const api = {
+  health: (signal: AbortSignal): Promise<Health> => getJson<Health>('/api/health', signal),
+
+  facets: (signal: AbortSignal): Promise<Facets> => getJson<Facets>('/api/facets', signal),
+
+  index: (query: SkillQuery, signal: AbortSignal): Promise<IndexResponse> =>
+    getJson<IndexResponse>(
+      withQuery('/api/index', {
+        q: query.q,
+        host: query.host,
+        source: query.source,
+        confidence: query.confidence,
+        health: query.health,
+        limit: query.limit,
+        offset: query.offset,
+      }),
+      signal,
+    ),
+
+  skill: (identityKey: string, signal: AbortSignal): Promise<SkillDetail> =>
+    getJson<SkillDetail>(skillPath(identityKey), signal),
+
+  files: (identityKey: string, signal: AbortSignal): Promise<FilesResponse> =>
+    getJson<FilesResponse>(`${skillPath(identityKey)}/files`, signal),
+
+  file: (identityKey: string, rel: string, signal: AbortSignal): Promise<FileContent> =>
+    getJson<FileContent>(withQuery(`${skillPath(identityKey)}/file`, { rel }), signal),
+
+  issues: (signal: AbortSignal): Promise<IssuesResponse> =>
+    getJson<IssuesResponse>(withQuery('/api/issues', { limit: 500 }), signal),
+
+  roots: (signal: AbortSignal): Promise<RootsResponse> => getJson<RootsResponse>('/api/roots', signal),
+};

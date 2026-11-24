@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "skilldesk"
+version = "0.1.0"
+description = "Local-first manager for agent skills: discover, organize, track and install SKILL.md packs."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn>=0.27",
+  "pydantic>=2.6",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "httpx>=0.27", "ruff>=0.4"]
+
+[project.scripts]
+skilldesk = "skilldesk.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "backend" }
+packages = ["skilldesk"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/backend"]
+pythonpath = ["backend"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
