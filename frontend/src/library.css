@@ -181,6 +181,13 @@
   .advanced { grid-area: 1 / 2; justify-self: end; }
   .table--hosts td { overflow-wrap: anywhere; }
 }
+@media (max-width: 460px) {
+  .topbar { display: grid; grid-template-columns: 1fr auto; grid-template-areas: 'brand tools' 'navigation navigation'; gap: 4px 10px; padding: 6px 10px 4px; }
+  .topbar .brand { grid-area: brand; justify-self: start; }
+  .topbar .topbar-tail { grid-area: tools; }
+  .topbar .tabs { grid-area: navigation; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 3px; }
+  .topbar .tab { padding: 7px 2px; text-align: center; }
+}
 @media (max-height: 550px) and (max-width: 860px) {
   .repository-directory { flex-wrap: nowrap; max-height: 42px; overflow-x: auto; }
   .repository-option { flex: none; }
