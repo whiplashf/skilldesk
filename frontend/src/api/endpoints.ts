@@ -41,6 +41,9 @@ export const api = {
     writeJson<SkillSummary>('/api/assets/' + encodeURIComponent(item.identity_key), 'PATCH', changes, item.libraryRevision),
   translate: (key: string) => writeJson<{ html: string; cached: boolean }>('/api/ai/translate', 'POST', { identity_key: key }),
   checkVersion: (key: string, force = false) => writeJson<VersionStatus>('/api/check', 'POST', { identity_key: key, force }),
+  fixIssue: (id: string, action: 'auto' | 'remove' = 'auto') =>
+    writeJson<{ fixed: boolean; action: string; entry: string; target?: string }>(
+      '/api/issues/' + encodeURIComponent(id) + '/fix', 'POST', { action }),
   aiSettings: (signal: AbortSignal) => getJson<AISettings>('/api/settings/ai', signal),
   upstreamQuota: (signal: AbortSignal) => getJson<UpstreamQuota>('/api/upstream/quota', signal),
   saveAI: (body: {baseUrl: string; model: string; apiKey?: string}) => writeJson<AISettings>('/api/settings/ai', 'PUT', body),

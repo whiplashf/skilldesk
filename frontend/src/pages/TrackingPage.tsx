@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { Health, IssuesResponse } from '../api/types';
 import { api } from '../api/endpoints';
 import { formatCount } from '../lib/format';
@@ -41,6 +42,27 @@ export function TrackingPage({ health, onRetryHealth, onOpenSkill }: TrackingPag
     issues.reload();
     onRetryHealth();
   };
+
+  const [busyId, setBusyId] = useState('');
+  const [message, setMessage] = useState('');
+
+  async function repair(issueId: string, action: 'auto' | 'remove' = 'auto') {
+    setBusyId(issueId);
+    setMessage('');
+    try {
+      const result = await api.fixIssue(issueId, action);
+      setMessage(
+        result.action === 'relinked'
+          ? '已把软链重指到实体副本：' + (result.target ?? '')
+          : '已移除死链：' + result.entry,
+      );
+      refresh();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusyId('');
+    }
+  }
 
   return (
     <div className="page">
@@ -110,8 +132,29 @@ export function TrackingPage({ health, onRetryHealth, onOpenSkill }: TrackingPag
                         <>
                           <span className="issue-detail">{issue.detail}</span>
                           <span className="issue-target mono">{issue.target}</span>
-                          {issue.fixable ? (
-                            <span className="chip chip--warn" title="可在宿主应用中处理">
+                          {kind === 'dangling_link' ? (
+                            <span className="issue-actions">
+                              <button
+                                type="button"
+                                className="button button--small"
+                                disabled={busyId === issue.id}
+                                title="找一个同名实体副本并重指这条软链"
+                                onClick={() => void repair(issue.id)}
+                              >
+                                {busyId === issue.id ? '修复中…' : '修复'}
+                              </button>
+                              <button
+                                type="button"
+                                className="button button--small button--ghost"
+                                disabled={busyId === issue.id}
+                                title="实体已经不存在时，直接删掉这条死链"
+                                onClick={() => void repair(issue.id, 'remove')}
+                              >
+                                移除
+                              </button>
+                            </span>
+                          ) : issue.fixable ? (
+                            <span className="chip chip--warn" title="可在 skill 详情里处理">
                               可修复
                             </span>
                           ) : null}
@@ -146,7 +189,11 @@ export function TrackingPage({ health, onRetryHealth, onOpenSkill }: TrackingPag
             );
           })}
           {truncated ? <p className="page-note">问题总数超过 500 条，列表只显示前 500 条。</p> : null}
-          <p className="page-note">打开待确认来源的条目，可关联 GitHub 仓库或标记为我写的。</p>
+          {message ? <p className="action-message" role="status">{message}</p> : null}
+          <p className="page-note">
+            悬空软链可直接修复：优先重指到同名实体副本，没有副本时可移除死链。
+            打开待确认来源的条目，可关联 GitHub 仓库或标记为我写的。
+          </p>
         </div>
       ) : null}
     </div>

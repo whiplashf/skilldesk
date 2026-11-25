@@ -28,6 +28,8 @@ from .health import KINDS as HEALTH_KINDS
 from .health import detect
 from .identity import CONFIDENCE_LABEL
 from .markdown import render, split_frontmatter
+from .repair import RepairError
+from .repair import fix_issue as repair_issue
 from .scan import MAX_SKILL_BYTES, input_stamp, read_body, scan
 
 RESCAN_THROTTLE_SECONDS = 3.0
@@ -50,6 +52,12 @@ def refresh_if_stale(database: Path, *, force: bool = False) -> bool:
         index_mod.rebuild(result, detect(result.skills, result.dangling), database)
         _last_rescan = time.monotonic()
     return True
+
+
+def rebuild_index(database: Path) -> None:
+    """Full rebuild; used after a repair changed the filesystem."""
+    result = scan(load_config())
+    index_mod.rebuild(result, detect(result.skills, result.dangling), database)
 
 
 def ensure_index(database: Path) -> None:
@@ -344,6 +352,27 @@ def create_app(db_path: str | Path | None = None, *, remote_token: str | None = 
             raise HTTPException(501, str(error))
         except (httpx.HTTPError, ValueError, LookupError, TypeError) as error:
             raise HTTPException(502, "翻译失败，请检查服务地址、模型与密钥后重试") from error
+
+    @app.post("/api/issues/{issue_id}/fix")
+    async def fix_one_issue(issue_id: str, request: Request) -> dict:
+        try:
+            body = await request.json()
+        except ValueError:
+            body = {}
+        action = str((body or {}).get("action") or "auto")
+        conn = with_conn()
+        try:
+            result = repair_issue(conn, issue_id, action)
+        except RepairError as error:
+            raise HTTPException(error.status, error.message) from error
+        finally:
+            conn.close()
+        rebuild_index(database)
+        conn = with_conn()
+        try:
+            return {**result, "counts": index_mod.counts(conn)}
+        finally:
+            conn.close()
 
     @app.get("/api/upstream/quota")
     def upstream_quota() -> dict:
