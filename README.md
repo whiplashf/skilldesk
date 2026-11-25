@@ -2,7 +2,7 @@
 
 想直接复制提示词？打开[按分类整理的提示词库](prompts/README.md)，每条都是独立的纯文本文件。
 
-Skilldesk 是本机的 Agent skill 管理器。打开技能库即可搜索已安装的 skill，查看哪些 Agent 和项目能使用它，阅读正文、收藏，以及检查已安装 GitHub skill 的版本。当前版本待用户验收。
+Skilldesk 是本机的 Agent skill 和提示词管理器。打开技能库即可搜索已安装的 skill，查看哪些 Agent 和项目能使用它，阅读正文、收藏，以及检查已安装 GitHub skill 的版本。当前版本待用户验收。
 
 ## 启动
 
@@ -17,6 +17,12 @@ pnpm --dir frontend build
 ```
 
 默认地址为 `http://127.0.0.1:17888`。使用 `skilldesk serve` 可单独启动服务。开发前端时，同时运行后端和 `pnpm --dir frontend dev`。
+
+## 使用提示词库
+
+在主导航打开「提示词库」，点「新建提示词」粘贴正文即可保存。标题留空时取正文首行，分类可以选已有名称，也可以直接输入新名称。通过分类或标题、正文关键词找到条目后，点「复制」即可取用完整原文，换行与缩进一并保留。
+
+点标题可以展开阅读、编辑或更换分类。编辑时选「稍后继续」会把草稿留在当前浏览器标签页。确认删除后可点「撤销」。已保存的提示词由本机服务存储，通过局域网访问也能看到同一份库。
 
 ## 使用技能库
 
@@ -51,6 +57,7 @@ pnpm --dir frontend build
 | 数据 | 默认位置 |
 | --- | --- |
 | 项目目录、个人收藏与归属、翻译设置 | `~/.config/skilldesk/` 下的 `config.json`、`library.json`、`ai.json` |
+| 个人提示词与分类 | `~/.config/skilldesk/prompts.json` |
 | 本机扫描索引 | `~/.local/state/skilldesk/index.db` |
 | 译文与上游检查结果 | `~/.cache/skilldesk/` |
 

@@ -15,6 +15,7 @@ export interface TopBarProps {
 
 const TABS: ReadonlyArray<{ hash: string; label: string; matches: ReadonlyArray<Route['name']> }> = [
   { hash: HASH.library, label: '本机技能库', matches: ['library', 'skill'] },
+  { hash: HASH.prompts, label: '提示词库', matches: ['prompts'] },
   { hash: HASH.tracking, label: '安装健康', matches: ['tracking'] },
   { hash: HASH.settings, label: '设置', matches: ['settings'] },
 ];
@@ -64,7 +65,7 @@ export function TopBar({ route, health, onRetryHealth, themePref, onThemePrefCha
       </nav>
 
       <div className="topbar-tail">
-        <IndexFreshness health={health} onRetry={onRetryHealth} />
+        {route.name !== 'prompts' && <IndexFreshness health={health} onRetry={onRetryHealth} />}
         <ThemeSwitch pref={themePref} onChange={onThemePrefChange} />
       </div>
     </header>

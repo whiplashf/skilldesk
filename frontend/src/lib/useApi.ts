@@ -21,6 +21,7 @@ export function useApi<T>(
   load: (signal: AbortSignal) => Promise<T>,
   deps: readonly unknown[],
   retainData = false,
+  enabled = true,
 ): AsyncResult<T> {
   const [state, setState] = useState<AsyncState<T>>(LOADING);
   const [attempt, setAttempt] = useState(0);
@@ -31,6 +32,7 @@ export function useApi<T>(
   });
 
   useEffect(() => {
+    if (!enabled) return;
     const run = loadRef.current;
     const controller = new AbortController();
     let active = true;
@@ -55,7 +57,7 @@ export function useApi<T>(
       controller.abort();
     };
     // `load` is intentionally read from the ref; `deps` identifies the request.
-  }, [...deps, attempt]);
+  }, [...deps, attempt, enabled]);
 
   const reload = useCallback(() => {
     setAttempt((value) => value + 1);

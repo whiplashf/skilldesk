@@ -21,7 +21,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
-from . import __version__, library, translation, upstream
+from . import __version__, library, prompts, translation, upstream
 from . import index as index_mod
 from .config import config_path, index_path, load_config
 from .health import KINDS as HEALTH_KINDS
@@ -192,6 +192,7 @@ def _file_kind(name: str) -> str:
 
 def create_app(db_path: str | Path | None = None, *, remote_token: str | None = None) -> FastAPI:
     app = FastAPI(title="skilldesk", version=__version__, docs_url="/api/docs", redoc_url=None)
+    app.include_router(prompts.router)
     database = Path(db_path) if db_path else index_path()
     ensure_index(database)
     write_token = secrets.token_urlsafe(32)

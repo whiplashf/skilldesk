@@ -198,3 +198,6 @@ export interface RootsResponse {
 export interface FilesResponse {
   items: SupportFile[];
 }
+
+export interface PromptText { title: string; category: string; body: string }
+export interface SavedPrompt extends PromptText { id: string; revision: number; updatedAt: number }

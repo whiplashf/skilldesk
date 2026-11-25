@@ -9,18 +9,21 @@ import { focusSearch } from './lib/searchFocus';
 import { useThemePref } from './lib/theme';
 import { useApi } from './lib/useApi';
 import { LibraryPage } from './pages/LibraryPage';
+import { PromptsPage } from './pages/PromptsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { TrackingPage } from './pages/TrackingPage';
 
 export function App() {
   const route = useHashRoute();
-  const health = useApi<Health>((signal) => api.health(signal), [], true);
+  const showIndexStatus = route.name !== 'prompts';
+  const health = useApi<Health>(api.health, [], true, showIndexStatus);
   const theme = useThemePref();
   useEffect(() => {
+    if (!showIndexStatus) return;
     const refresh = () => { if (!document.hidden) health.reload(); };
     window.addEventListener('focus', refresh);
     return () => window.removeEventListener('focus', refresh);
-  }, [health.reload]);
+  }, [health.reload, showIndexStatus]);
 
   useEffect(() => {
     if (window.location.hash === '') {
@@ -38,7 +41,7 @@ export function App() {
         return;
       }
       event.preventDefault();
-      navigate(HASH.library);
+      if (route.name !== 'prompts') navigate(HASH.library);
       focusSearch();
     };
     window.addEventListener('keydown', onKeyDown);
@@ -69,6 +72,8 @@ export function App() {
             selectedKey={route.name === 'skill' ? route.identityKey : null}
             onOpenSkill={openSkill}
           />
+        ) : route.name === 'prompts' ? (
+          <PromptsPage />
         ) : route.name === 'tracking' ? (
           <TrackingPage health={health.state} onRetryHealth={health.reload} onOpenSkill={openSkill} />
         ) : route.name === 'settings' ? (

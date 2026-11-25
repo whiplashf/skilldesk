@@ -3,12 +3,14 @@ import { useEffect, useState } from 'react';
 export type Route =
   | { name: 'library' }
   | { name: 'skill'; identityKey: string }
+  | { name: 'prompts' }
   | { name: 'tracking' }
   | { name: 'settings' }
   | { name: 'notFound'; raw: string };
 
 export const HASH = {
   library: '#/library',
+  prompts: '#/prompts',
   tracking: '#/tracking/health',
   settings: '#/settings',
 } as const;
@@ -88,6 +90,7 @@ function parseRoute(hash: string): Route {
   if (head === 'tracking') {
     return { name: 'tracking' };
   }
+  if (head === 'prompts') return { name: 'prompts' };
   if (head === 'settings') {
     return { name: 'settings' };
   }
