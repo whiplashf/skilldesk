@@ -257,28 +257,34 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 
 def _serve(args: argparse.Namespace, open_browser: bool) -> int:
-    _ensure_index()
     import uvicorn
 
-    from .server import create_app
+    from .server import create_app, lan_address
 
     remote = args.host not in {"127.0.0.1", "localhost", "::1"}
-    remote_token = os.environ.get("SKILLDESK_REMOTE_TOKEN", "") if remote else ""
-    if remote and not (args.allow_remote and remote_token):
-        print("远程访问需要 --allow-remote 和 SKILLDESK_REMOTE_TOKEN", file=sys.stderr)
+    lan_host = lan_address(args.host) if args.allow_lan else None
+    if args.allow_lan and not lan_host:
+        print("--allow-lan 需要用 --host 指定本机的局域网 IP", file=sys.stderr)
         return EXIT_ERROR
-    app = create_app(remote_token=remote_token or None)
-    url = f"http://{args.host}:{args.port}/"
+    remote_token = os.environ.get("SKILLDESK_REMOTE_TOKEN", "") if remote and args.allow_remote else ""
+    if remote and not (lan_host or remote_token):
+        print("局域网可使用 --allow-lan，其他远程访问需要 --allow-remote 和 SKILLDESK_REMOTE_TOKEN", file=sys.stderr)
+        return EXIT_ERROR
+    app = create_app(remote_token=remote_token or None, lan_host=lan_host)
+    url_host = f"[{args.host}]" if ":" in args.host else args.host
+    url = f"http://{url_host}:{args.port}/"
+    # LAN access checks the network peer from the socket.
+    options = {"host": args.host, "port": args.port, "proxy_headers": not args.allow_lan}
     if not open_browser:
         print(f"skilldesk → {url}")
-        uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+        uvicorn.run(app, **options, log_level="info")
         return EXIT_OK
 
     import threading
     import time
     import webbrowser
 
-    config = uvicorn.Config(app, host=args.host, port=args.port, log_level="warning")
+    config = uvicorn.Config(app, **options, log_level="warning")
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
@@ -347,7 +353,9 @@ def build_parser() -> argparse.ArgumentParser:
     ):
         serve_parser = sub.add_parser(name, help=help_text)
         serve_parser.add_argument("--host", default="127.0.0.1")
-        serve_parser.add_argument("--allow-remote", action="store_true", help="启用令牌保护的远程访问")
+        access = serve_parser.add_mutually_exclusive_group()
+        access.add_argument("--allow-lan", action="store_true", help="通过 --host 指定的局域网 IP 免登录访问")
+        access.add_argument("--allow-remote", action="store_true", help="启用令牌保护的远程访问")
         serve_parser.add_argument("--port", type=int, default=17888)
         serve_parser.set_defaults(func=func)
 

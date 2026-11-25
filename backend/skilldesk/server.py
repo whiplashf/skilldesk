@@ -12,6 +12,7 @@ import os
 import secrets
 import threading
 import time
+from ipaddress import IPv6Address, ip_address, ip_network
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import quote
@@ -213,7 +214,27 @@ def _file_kind(name: str) -> str:
     return "binary"
 
 
-def create_app(db_path: str | Path | None = None, *, remote_token: str | None = None) -> FastAPI:
+_LAN_RANGES = tuple(ip_network(prefix) for prefix in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"))
+
+
+def lan_address(host: str | None) -> str | None:
+    """Canonical private LAN address, for both the bind address and the connecting peer."""
+    try:
+        address = ip_address(host or "")
+    except ValueError:
+        return None
+    if isinstance(address, IPv6Address) and address.ipv4_mapped:
+        address = address.ipv4_mapped
+    return str(address) if any(address in network for network in _LAN_RANGES) else None
+
+
+def create_app(
+    db_path: str | Path | None = None, *, remote_token: str | None = None, lan_host: str | None = None
+) -> FastAPI:
+    if lan_host is not None:
+        lan_host = lan_address(lan_host)
+        if not lan_host or remote_token:
+            raise ValueError("局域网免登录模式需要单独绑定本机的局域网 IP")
     app = FastAPI(title="skilldesk", version=__version__, docs_url="/api/docs", redoc_url=None)
     database = Path(db_path) if db_path else index_path()
     try:
@@ -225,7 +246,11 @@ def create_app(db_path: str | Path | None = None, *, remote_token: str | None = 
 
     @app.middleware("http")
     async def local_session(request: Request, call_next):
-        if remote_token:
+        if lan_host:
+            if (lan_address(request.url.hostname) != lan_host or not request.client
+                    or not lan_address(request.client.host)):
+                return JSONResponse({"detail": "请在局域网内通过服务 IP 访问"}, status_code=403)
+        elif remote_token:
             auth = request.headers.get("authorization", "")
             try:
                 password = base64.b64decode(auth.removeprefix("Basic "), validate=True).decode().split(":", 1)[1]

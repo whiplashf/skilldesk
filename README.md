@@ -16,6 +16,8 @@ pnpm --dir frontend build
 
 默认地址为 `http://127.0.0.1:17888`。使用 `skilldesk serve` 可单独启动服务。开发前端时，同时运行后端和 `pnpm --dir frontend dev`。
 
+局域网内免登录访问可运行 `skilldesk serve --host 192.168.1.10 --allow-lan`，将示例 IP 换成本机的局域网地址。同一局域网中能访问该地址的设备可以直接打开页面、管理这台机器的 skill。
+
 ## 使用技能库
 
 | 在哪里 | 能做什么 |
