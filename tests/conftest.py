@@ -27,7 +27,9 @@ ENV_VARS_TO_CLEAR = (
 @pytest.fixture
 def fake_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     home = tmp_path / "home"
-    monkeypatch.setattr(prompt_catalog, "PROJECT", tmp_path / "checkout")
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    monkeypatch.setattr(prompt_catalog, "PROJECT", checkout)
     for relative in (".agents/skills", ".claude/skills", ".config/opencode/skills"):
         (home / relative).mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("HOME", str(home))
@@ -42,18 +44,17 @@ def fake_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture
-def publication_remote(tmp_path, monkeypatch):
-    """A real branch and push destination, entirely on the test machine."""
-    from skilldesk import prompt_publish
-
-    repo = tmp_path / "remote.git"
-    seed = tmp_path / "seed"
-    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(repo)], check=True)
-    subprocess.run(["git", "init", "-q", "-b", "main", str(seed)], check=True)
-    (seed / "README.md").write_text("Project")
-    subprocess.run(["git", "-C", str(seed), "add", "README.md"], check=True)
-    subprocess.run(["git", "-C", str(seed), "-c", "user.name=Tests", "-c", "user.email=test@example.invalid",
+def prompt_checkout(fake_home, tmp_path):
+    """A checkout with an existing staged change and a separate, local-only origin."""
+    repo = prompt_catalog.PROJECT
+    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+    (repo / ".gitignore").write_bytes((Path(__file__).resolve().parents[1] / ".gitignore").read_bytes())
+    subprocess.run(["git", "-C", str(repo), "add", ".gitignore"], check=True)
+    subprocess.run(["git", "-C", str(repo), "-c", "user.name=Tests", "-c", "user.email=test@example.invalid",
                     "commit", "-qm", "Initial"], check=True)
-    subprocess.run(["git", "-C", str(seed), "push", "-q", str(repo), "HEAD:main"], check=True)
-    monkeypatch.setattr(prompt_publish, "destination", lambda: prompt_publish.Target("test/library", repo.as_uri()))
-    return repo
+    origin = tmp_path / "origin.git"
+    subprocess.run(["git", "clone", "-q", "--bare", str(repo), str(origin)], check=True)
+    subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", origin.as_uri()], check=True)
+    (repo / "unrelated.txt").write_text("Already staged")
+    subprocess.run(["git", "-C", str(repo), "add", "unrelated.txt"], check=True)
+    return repo, origin

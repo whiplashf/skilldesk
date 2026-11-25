@@ -1,7 +1,7 @@
 """Paths and configuration.
 
-Everything skilldesk owns lives in XDG locations so the tool never writes inside
-a checked-out repository:
+Machine settings, the skill index and cached results use XDG locations.
+The prompt library lives in the current Skilldesk checkout's prompts/ directory.
 
 * config  ``$XDG_CONFIG_HOME/skilldesk``  (user authored, exportable)
 * state   ``$XDG_STATE_HOME/skilldesk``   (machine index, rebuildable)

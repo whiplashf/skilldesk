@@ -45,7 +45,7 @@ export function PromptsPage() {
   }
   function saved(item: SavedPrompt) {
     setEditor(undefined); show(item); reload();
-    setNotice({ text: '已保存到本机「' + item.title + '」' });
+    setNotice({ text: '已将「' + item.title + '」保存到仓库' });
   }
   async function restore(item: SavedPrompt, revision: number) {
     setBusy(true);

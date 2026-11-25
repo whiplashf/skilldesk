@@ -91,6 +91,7 @@ export function PromptEditor({ item, category, categories, onClose, onSaved }: P
         {categories.length > 0 && <datalist id="prompt-categories">{categories.map(name => <option key={name} value={name} />)}</datalist>}
       </div>
       {error && <p className="action-message" role="alert">{error}{conflict && '。可以将当前草稿另存为副本。'}</p>}
+      <p className="prompt-save-location">保存到仓库的 <code>prompts/</code>，随项目一起提交和推送。</p>
       <div className="prompt-form-actions">
         {dirty && <button type="button" className="link-button discard-draft" disabled={busy} onClick={() => close(true)}>放弃修改</button>}
         <button type="button" className="button" disabled={busy} onClick={() => close()}>{dirty ? '稍后继续' : '取消'}</button>

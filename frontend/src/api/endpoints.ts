@@ -1,7 +1,6 @@
 import { getJson, withQuery, writeJson } from './client';
 import type { AISettings, AssetChanges, PromptText, SavedPrompt, SkillSummary, UpstreamQuota, VersionStatus } from './types';
 import type {
-  PromptPublication,
   Facets,
   MaintenancePreview,
   MaintenanceResult,
@@ -43,10 +42,6 @@ export const api = {
     writeJson<SavedPrompt>('/api/prompts/' + encodeURIComponent(id), 'PUT', draft, revision),
   deletePrompt: (item: SavedPrompt) =>
     writeJson<{ revision: number }>('/api/prompts/' + encodeURIComponent(item.id), 'DELETE', undefined, item.revision),
-  previewPromptPublication: (item: SavedPrompt) =>
-    writeJson<PromptPublication>('/api/prompts/' + encodeURIComponent(item.id) + '/publication/preview', 'POST', undefined, item.revision),
-  publishPrompt: (item: SavedPrompt, base: string) =>
-    writeJson<PromptPublication>('/api/prompts/' + encodeURIComponent(item.id) + '/publication', 'POST', { base }, item.revision),
   installRoots: (signal: AbortSignal) =>
     getJson<{ items: { path: string; label: string }[] }>('/api/maintenance/roots', signal),
   previewInstall: (root: string, repository: string, path: string) =>

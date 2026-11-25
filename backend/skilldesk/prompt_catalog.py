@@ -1,16 +1,27 @@
-"""The portable prompts/ directory shared by GitHub and fresh installations."""
+"""Format and location of the checked-out prompts/ directory."""
 from __future__ import annotations
 
-import hashlib
 import json
 import re
+import subprocess
 import unicodedata
 from html import escape
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote
 from uuid import UUID
 
-PROJECT = Path(__file__).resolve().parents[2]
+from .identity import normalize_source
+
+
+def find_project() -> Path | None:
+    cwd = Path.cwd().resolve()
+    for folder in (cwd, *cwd.parents, Path(__file__).resolve().parents[2]):
+        if (folder / "backend/skilldesk/prompts.py").is_file() and (folder / "pyproject.toml").is_file():
+            return folder
+    return None
+
+
+PROJECT = find_project()
 ARTICLE = "https://mp.weixin.qq.com/s/NAdhdFrUq9-BKelqzqpwBQ"
 INDEX_START = "<!-- skilldesk:entries -->"
 INDEX_END = "<!-- /skilldesk:entries -->"
@@ -68,11 +79,14 @@ def index_bytes(items: dict[str, dict], previous: bytes | None = None) -> bytes:
         for item in group:
             credit = " · 数字生命卡兹克" if item.get("source") == ARTICLE and "卡兹克" not in item["title"] else ""
             lines.append(f"- [{label(item['title'])}]({quote(item['path'])}){credit}")
-    if any(item.get("source") == ARTICLE for item in items.values()):
+    article_count = sum(item.get("source") == ARTICLE for item in items.values())
+    if article_count:
         article = f"[《都 Agent 时代了，我还是想分享给你这 12 个我最常用的 Prompt》]({ARTICLE})"
-        lines.extend(["", "## 出处", "", f"卡兹克的 12 个模板来自数字生命卡兹克分享的{article}。"])
+        lines.extend(["", "## 出处", "", f"卡兹克的 {article_count} 个模板来自数字生命卡兹克分享的{article}。"])
     doc = (previous.decode() if previous is not None else "# 提示词库\n\n打开一条提示词，点击 GitHub 文件右上角的 "
            f"**Copy raw file** 即可复制完整正文。\n\n{INDEX_START}\n{INDEX_END}\n")
+    if INDEX_START not in doc and INDEX_END not in doc:
+        doc = doc.rstrip() + f"\n\n{INDEX_START}\n{INDEX_END}\n"
     if doc.count(INDEX_START) != 1 or doc.count(INDEX_END) != 1 or doc.index(INDEX_START) >= doc.index(INDEX_END):
         raise ValueError("README.md 缺少提示词索引标记")
     before, _, rest = doc.partition(INDEX_START)
@@ -80,14 +94,25 @@ def index_bytes(items: dict[str, dict], previous: bytes | None = None) -> bytes:
     return (before + INDEX_START + "\n".join(lines) + "\n" + INDEX_END + after).encode()
 
 
-def public_version(repository: str, branch: str, key: str, info: dict | None, body: bytes) -> str:
-    metadata = json.dumps([repository, branch, key, info], ensure_ascii=False, sort_keys=True).encode()
-    return hashlib.sha256(metadata + b"\0" + body).hexdigest()
+def github_catalog_url() -> str | None:
+    if not PROJECT or not (PROJECT / ".git").exists():
+        return None
+    try:
+        origin = subprocess.check_output(["git", "config", "--local", "--get", "remote.origin.url"], cwd=PROJECT,
+                                         text=True, stderr=subprocess.DEVNULL, timeout=2)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    source = normalize_source(origin)
+    if source and source[0] == "github.com" and re.fullmatch(r"[\w.-]+/[\w.-]+", source[1], re.ASCII):
+        return f"https://github.com/{source[1]}/tree/HEAD/prompts"
+    return None
 
 
 def checked_file(root: Path, relative: str) -> Path:
     path = root
     for part in PurePosixPath(relative).parts:
+        if path.exists() and not path.is_dir():
+            raise ValueError("提示词目录路径被文件占用")
         path = path / part
         if path.is_symlink():
             raise ValueError("提示词目录含符号链接")

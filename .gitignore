@@ -17,3 +17,8 @@ frontend/dist/
 data/
 cache/
 .DS_Store
+
+# Prompt categories can share names with ignored runtime directories.
+!/prompts/*/
+!/prompts/*/*.txt
+/prompts/**/.skilldesk-*.tmp
