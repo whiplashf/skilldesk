@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { SavedPrompt } from '../api/types';
 import { copyText } from '../lib/clipboard';
+import { PublishPrompt } from './PublishPrompt';
 
 interface Props {
   item: SavedPrompt;
@@ -48,6 +49,7 @@ export function PromptRow({ item, expanded, showCategory, busy, onToggle, onEdit
           <button type="button" className="button" disabled={busy} onClick={() => setConfirming(false)}>取消</button>
           <button type="button" className="button prompt-danger" disabled={busy} onClick={onDelete}>确认删除</button></>
           : <><button type="button" className="link-button" onClick={onEdit}>编辑</button>
+            <PublishPrompt key={item.revision} item={item} />
             <button type="button" className="link-button" disabled={busy} onClick={() => setConfirming(true)}>删除…</button></>}
       </div>
     </>}</div>

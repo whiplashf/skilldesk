@@ -2,6 +2,7 @@
 
 打开一条提示词，点击 GitHub 文件右上角的 **Copy raw file** 即可复制完整正文。
 
+<!-- skilldesk:entries -->
 共 13 条，分为 6 类。
 
 ## 交互设计
@@ -37,4 +38,5 @@
 
 ## 出处
 
-署名「卡兹克」的模板来自数字生命卡兹克分享的[《都 Agent 时代了，我还是想分享给你这 12 个我最常用的 Prompt》](https://mp.weixin.qq.com/s/NAdhdFrUq9-BKelqzqpwBQ)。这些模板保留原作者署名。
+卡兹克的 12 个模板来自数字生命卡兹克分享的[《都 Agent 时代了，我还是想分享给你这 12 个我最常用的 Prompt》](https://mp.weixin.qq.com/s/NAdhdFrUq9-BKelqzqpwBQ)。
+<!-- /skilldesk:entries -->

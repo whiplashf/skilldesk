@@ -1,12 +1,42 @@
+import re
+import subprocess
 from urllib.parse import urlsplit
 
 from playwright.sync_api import expect
+
+
+def test_explicit_publish_cancel_and_open_published_copy(page, publication_remote):
+    tab, _ = page
+    tab.set_viewport_size({"width": 390, "height": 844})
+    tab.goto("/#/prompts")
+    tab.get_by_role("button", name="新建提示词").click()
+    body = "请检查表单状态。\n  保留空白。"
+    tab.get_by_label("提示词正文").fill(body)
+    tab.get_by_role("button", name="保存提示词").click()
+    publish = tab.get_by_role("button", name="发布到 GitHub", exact=True)
+    dialog = tab.get_by_role("dialog", name="发布到 GitHub")
+    publish.click()
+    expect(dialog).to_contain_text("test/library")
+    dialog.get_by_role("button", name="取消").click()
+    expect(dialog).to_have_count(0)
+    assert subprocess.check_output(["git", "-C", str(publication_remote), "rev-list", "--count", "HEAD"]).strip() == b"1"
+    publish.click()
+    dialog.get_by_role("button", name="确认发布").click()
+    link = dialog.get_by_role("link", name="在 GitHub 查看")
+    expect(link).to_have_attribute("href", re.compile(r"^https://github\.com/test/library/blob/main/prompts/"))
+    expect(dialog.get_by_role("heading", name="已发布到 GitHub")).to_be_visible()
+    dialog.get_by_role("button", name="关闭").click()
+    publish.click()
+    expect(dialog.get_by_role("heading", name="与 GitHub 一致")).to_be_visible()
+    expect(dialog.get_by_role("button", name="确认发布")).to_have_count(0)
+    assert tab.evaluate("document.documentElement.scrollWidth <= innerWidth")
 
 
 def test_save_find_copy_reclassify_and_undo_on_mobile(page):
     tab, requests = page
     tab.set_viewport_size({"width": 390, "height": 844})
     tab.goto("/#/library", wait_until="networkidle")
+    requests.clear()  # Measure network access during the prompt workflow.
     tab.get_by_role("link", name="提示词库").click()
     tab.get_by_role("button", name="新建提示词").click()
     body = "审查表单\n\n  保留缩进和列表。\n- 核对输入反馈\n"

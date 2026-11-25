@@ -8,8 +8,9 @@ from uuid import UUID
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
+from . import prompt_catalog, prompt_publish
 from .config import config_dir
-from .library import read_json, write_json, writing
+from .library import write_json, writing
 
 router = APIRouter(prefix="/api/prompts", tags=["prompts"])
 FILENAME = "prompts.json"
@@ -38,8 +39,19 @@ class PromptBook(BaseModel):
 
 def load_book() -> PromptBook:
     try:
-        return PromptBook.model_validate(read_json(config_dir() / FILENAME, {"version": 1, "items": {}}))
-    except (ValueError, OSError) as exc:
+        path = config_dir() / FILENAME
+        if path.exists():
+            return PromptBook.model_validate_json(path.read_bytes())
+        root = prompt_catalog.PROJECT
+        catalog = prompt_catalog.checked_file(root, "prompts/catalog.json")
+        items = {}
+        if catalog.is_file():
+            for key, info in prompt_catalog.read_catalog(catalog.read_bytes()).items():
+                file = prompt_catalog.checked_file(root / "prompts", info["path"])
+                items[key] = Prompt(id=key, revision=1, updatedAt=0, title=info["title"],
+                                    category=info["category"], body=file.read_bytes().decode())
+        return PromptBook(version=1, items=items)
+    except (ValueError, OSError, TypeError, KeyError, AttributeError) as exc:
         raise HTTPException(500, "无法读取本机提示词库，请检查 prompts.json") from exc
 
 
@@ -47,9 +59,38 @@ def conflict() -> HTTPException:
     return HTTPException(409, "这条提示词已在其他窗口更改或删除")
 
 
+class PublishRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    base: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+def saved_revision(prompt_id: UUID, revision: int) -> Prompt:
+    prompt = load_book().items.get(prompt_id.hex)
+    if not prompt or prompt.revision != revision:
+        raise conflict()
+    return prompt
+
+
+@router.post("/{prompt_id}/publication/preview")
+def preview_publication(prompt_id: UUID, if_match: int = Header(ge=1)):
+    return prompt_publish.publication(saved_revision(prompt_id, if_match))
+
+
+@router.post("/{prompt_id}/publication")
+def publish_prompt(prompt_id: UUID, request: PublishRequest, if_match: int = Header(ge=1)):
+    return prompt_publish.publication(saved_revision(prompt_id, if_match), request.base)
+
+
 @router.get("")
 def list_prompts():
-    return {"items": sorted(load_book().items.values(), key=lambda p: (p.updatedAt, p.id), reverse=True)}
+    response = {"items": sorted(load_book().items.values(), key=lambda p: (p.updatedAt, p.id), reverse=True)}
+    if (prompt_catalog.PROJECT / "prompts/catalog.json").is_file():
+        try:
+            target = prompt_publish.destination()
+        except HTTPException:
+            return response
+        response["catalogUrl"] = f"https://github.com/{target.name}/tree/HEAD/prompts"
+    return response
 
 
 @router.put("/{prompt_id}")

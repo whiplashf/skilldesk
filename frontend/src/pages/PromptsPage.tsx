@@ -45,7 +45,7 @@ export function PromptsPage() {
   }
   function saved(item: SavedPrompt) {
     setEditor(undefined); show(item); reload();
-    setNotice({ text: '已保存「' + item.title + '」' });
+    setNotice({ text: '已保存到本机「' + item.title + '」' });
   }
   async function restore(item: SavedPrompt, revision: number) {
     setBusy(true);
@@ -76,6 +76,7 @@ export function PromptsPage() {
     </aside>}
     <section className="prompt-content" aria-label="提示词列表"><div className="prompt-sheet">
       <PageHeader title={activeCategory === null ? '提示词库' : activeCategory || '未分类'}
+        sub={state.data?.catalogUrl && <a href={state.data.catalogUrl} target="_blank" rel="noreferrer">GitHub 提示词目录 ↗</a>}
         aside={<button type="button" className="button prompt-primary" onClick={() => setEditor('new')}>
           {hasNewPromptDraft() ? '继续草稿' : '新建提示词'}</button>} />
       {(items.length > 0 || query) && <div className="prompt-search">
