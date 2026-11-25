@@ -13,7 +13,8 @@ from skilldesk.health import detect
 from skilldesk.scan import scan
 from skilldesk.server import create_app
 
-GATEWAY = "http://10.111.46.46:8786"
+# RFC 5737 documentation range: the tests only need a non-loopback address.
+GATEWAY = "http://192.0.2.10:8786"
 
 
 def build_index(fake_home: Path, tmp_path: Path) -> Path:
