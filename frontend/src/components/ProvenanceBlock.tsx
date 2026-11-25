@@ -43,7 +43,9 @@ export function ProvenanceBlock({ provenance, confidenceLabel }: ProvenanceBlock
           </div>
         )}
       </dl>
-      {claimed ? null : <p className="block-note">可以在上方关联 GitHub 仓库和文档路径，以便检查版本。</p>}
+      {claimed ? null : <p className="block-note">
+        可以在上方关联 GitHub 仓库和文档路径，以便检查版本；本机自写的 skill 勾选「我写的」即可不再提示。
+      </p>}
     </section>
   );
 }

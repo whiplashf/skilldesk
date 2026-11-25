@@ -161,6 +161,7 @@ def test_unconfigured_translation_and_private_settings(app_client, monkeypatch):
     ],
 )
 def test_github_release_requires_skill_evidence(tmp_path, baseline, released, scope_tag, expected):
+    upstream.forget_caches()  # each case models a different upstream state
     directory = write_skill(tmp_path, "alpha")
     item = {"name": "alpha", "dir_name": "alpha", "realpath": str(directory)}
     source = {"repo": "owner/repo", "path": "skills/alpha/SKILL.md", "ref": "base"}
@@ -228,6 +229,7 @@ def test_project_lock_belongs_to_its_own_store(fake_home, tmp_path):
 
 
 def test_scoped_release_and_recorded_tree(tmp_path):
+    upstream.forget_caches()
     folder = write_skill(tmp_path, "alpha", extra_frontmatter="version: 1.0.0\n")
     item = {"name": "alpha", "dir_name": "alpha", "realpath": str(folder)}
     source = {"repo": "owner/pack", "path": "skills/alpha/SKILL.md", "ref": "", "tree": "base"}
@@ -243,6 +245,7 @@ def test_scoped_release_and_recorded_tree(tmp_path):
 
     status = upstream.evaluate(item, source, get)
     assert (status["status"], status["latest"]) == ("release", "alpha@v1.2.0")
+    upstream.forget_caches()  # the second scenario has no releases at all
     assert (
         upstream.evaluate(item, source, lambda e, p: [] if e == "releases" else get(e, p))["status"]
         == "changed"

@@ -66,6 +66,8 @@ CREATE TABLE provenance(
     path TEXT NOT NULL,
     ref TEXT NOT NULL,
     tree TEXT NOT NULL,
+    installed_at TEXT NOT NULL,
+    folder_hash TEXT NOT NULL,
     local_root TEXT NOT NULL,
     checkout_remote TEXT NOT NULL,
     provider TEXT NOT NULL,
@@ -162,8 +164,8 @@ def rebuild(result: ScanResult, issues: list[Issue], path: Path | str | None = N
             ],
         )
         conn.executemany(
-            "INSERT INTO provenance(identity_key, host, repo, path, ref, tree, local_root, checkout_remote, "
-            "provider, confidence, evidence) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO provenance(identity_key, host, repo, path, ref, tree, installed_at, folder_hash, "
+            "local_root, checkout_remote, provider, confidence, evidence) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             [
                 (
                     skill.identity_key,
@@ -172,6 +174,8 @@ def rebuild(result: ScanResult, issues: list[Issue], path: Path | str | None = N
                     skill.provenance.path,
                     skill.provenance.ref,
                     skill.provenance.tree,
+                    skill.provenance.installed_at,
+                    skill.provenance.folder_hash,
                     skill.provenance.local_root,
                     skill.provenance.checkout_remote,
                     skill.provenance.provider,
@@ -240,17 +244,34 @@ def is_current(path: Path) -> bool:
         conn.close()
 
 
-def counts(conn: sqlite3.Connection) -> dict[str, int]:
-    def one(sql: str) -> int:
-        row = conn.execute(sql).fetchone()
+def counts(conn: sqlite3.Connection, claimed: set[str] | frozenset[str] = frozenset()) -> dict[str, int]:
+    """Index totals, with user claims already subtracted from the warnings.
+
+    The index keeps every scan finding (it is a projection of the files); a claim
+    is a user annotation that answers "this one is accounted for", so the counts
+    the UI shows are the finding counts minus the claimed ones.
+    """
+    keys = json.dumps(sorted(claimed))
+
+    def one(sql: str, params: tuple = ()) -> int:
+        row = conn.execute(sql, params).fetchone()
         return int(row[0]) if row else 0
 
+    claimed_issues = one(
+        "SELECT count(*) FROM health_issue WHERE kind = 'unclaimed_source' "
+        "AND identity_key IN (SELECT value FROM json_each(?))",
+        (keys,),
+    )
     return {
         "skills": one("SELECT count(*) FROM skill"),
         "placements": one("SELECT count(*) FROM placement"),
         "dangling": one("SELECT count(*) FROM health_issue WHERE kind = 'dangling_link'"),
-        "unclaimed": one("SELECT count(*) FROM provenance WHERE confidence = 'none'"),
-        "issues": one("SELECT count(*) FROM health_issue"),
+        "unclaimed": one(
+            "SELECT count(*) FROM provenance WHERE confidence = 'none' "
+            "AND identity_key NOT IN (SELECT value FROM json_each(?))",
+            (keys,),
+        ),
+        "issues": one("SELECT count(*) FROM health_issue") - claimed_issues,
         "roots": one("SELECT count(*) FROM host_root WHERE exists_ = 1"),
     }
 
@@ -292,7 +313,8 @@ def _row_to_item(row: sqlite3.Row) -> dict[str, Any]:
             "repo": row["repo"] if "repo" in keys else "",
             "path": row["path"] if "path" in keys else "",
             "ref": row["ref"] if "ref" in keys else "",
-            "tree": row["tree"] or "",
+            "tree": (row["tree"] or "") if "tree" in keys else "",
+            "installedAt": (row["installed_at"] or "") if "installed_at" in keys else "",
             "localRoot": row["local_root"] or "",
             "checkoutRemote": row["checkout_remote"] or "",
             "provider": row["provider"] or "",
@@ -421,12 +443,27 @@ def list_skills(
     if source:
         where.append("(p.host || '/' || p.repo) = ?")
         params.append(source)
+    claimed = sorted(library.claims(annotations))
     if confidence:
-        where.append("p.confidence = ?")
-        params.append(confidence)
+        if confidence == "claimed":
+            where.append(f"s.identity_key IN ({annotated}) AND p.confidence = 'none'")
+            params.append(json.dumps(claimed))
+        elif confidence == "none":
+            where.append(f"p.confidence = 'none' AND s.identity_key NOT IN ({annotated})")
+            params.append(json.dumps(claimed))
+        else:
+            where.append("p.confidence = ?")
+            params.append(confidence)
     if health:
-        where.append("EXISTS (SELECT 1 FROM health_issue h WHERE h.identity_key = s.identity_key AND h.kind = ?)")
-        params.append(health)
+        if health == "unclaimed_source":
+            where.append(
+                f"EXISTS (SELECT 1 FROM health_issue h WHERE h.identity_key = s.identity_key "
+                f"AND h.kind = 'unclaimed_source') AND s.identity_key NOT IN ({annotated})"
+            )
+            params.append(json.dumps(claimed))
+        else:
+            where.append("EXISTS (SELECT 1 FROM health_issue h WHERE h.identity_key = s.identity_key AND h.kind = ?)")
+            params.append(health)
 
     clause = (" WHERE " + " AND ".join(where)) if where else ""
     if by_repository:
@@ -447,7 +484,27 @@ def list_skills(
     }
 
 
-def facets(conn: sqlite3.Connection) -> dict[str, list[dict[str, Any]]]:
+def _claimed_without_record(conn: sqlite3.Connection, assets: dict | None) -> set[str]:
+    """Claimed identity keys whose scan verdict is still ``none``.
+
+    A claim only fills a gap: when the machine already recorded an upstream, the
+    record stays the reported provenance and the claim changes nothing here.
+    """
+    candidates = sorted(library.claims(assets or {}))
+    if not candidates:
+        return set()
+    return {
+        row[0]
+        for row in conn.execute(
+            "SELECT identity_key FROM provenance WHERE confidence = 'none' "
+            "AND identity_key IN (SELECT value FROM json_each(?))",
+            (json.dumps(candidates),),
+        )
+    }
+
+
+def facets(conn: sqlite3.Connection, assets: dict | None = None) -> dict[str, list[dict[str, Any]]]:
+    claimed = _claimed_without_record(conn, assets)
     hosts = [
         {"value": row["kind"], "label": row["kind"], "count": row["n"]}
         for row in conn.execute(
@@ -460,14 +517,18 @@ def facets(conn: sqlite3.Connection) -> dict[str, list[dict[str, Any]]]:
             "SELECT host, repo, count(*) AS n FROM provenance WHERE repo <> '' GROUP BY host, repo ORDER BY n DESC"
         )
     ]
-    confidence = [
-        {"value": row["confidence"], "label": row["confidence"], "count": row["n"]}
-        for row in conn.execute("SELECT confidence, count(*) AS n FROM provenance GROUP BY confidence ORDER BY n DESC")
-    ]
-    health = [
-        {"value": row["kind"], "label": row["kind"], "count": row["n"]}
-        for row in conn.execute("SELECT kind, count(*) AS n FROM health_issue GROUP BY kind ORDER BY n DESC")
-    ]
+    confidence = []
+    for row in conn.execute("SELECT confidence, count(*) AS n FROM provenance GROUP BY confidence ORDER BY n DESC"):
+        count = int(row["n"]) - (len(claimed) if row["confidence"] == "none" else 0)
+        if count > 0:
+            confidence.append({"value": row["confidence"], "label": row["confidence"], "count": count})
+    if claimed:
+        confidence.append({"value": "claimed", "label": "claimed", "count": len(claimed)})
+    health = []
+    for row in conn.execute("SELECT kind, count(*) AS n FROM health_issue GROUP BY kind ORDER BY n DESC"):
+        count = int(row["n"]) - (len(claimed) if row["kind"] == "unclaimed_source" else 0)
+        if count > 0:
+            health.append({"value": row["kind"], "label": row["kind"], "count": count})
     agents = [{"value": row[0], "count": row[1]} for row in conn.execute(
         "SELECT agent, count(DISTINCT identity_key) FROM agent_access JOIN placement USING(host_root) "
         "GROUP BY agent ORDER BY agent")]
@@ -500,9 +561,7 @@ def list_placements(conn: sqlite3.Connection, key: str) -> list[dict[str, Any]]:
     ]
 
 
-def list_issues(
-    conn: sqlite3.Connection, *, kind: str = "", identity_key: str = "", limit: int = 500, offset: int = 0
-) -> list[dict[str, Any]]:
+def _issue_clause(kind: str, identity_key: str, claimed) -> tuple[str, list[Any]]:
     where: list[str] = []
     params: list[Any] = []
     if kind:
@@ -511,7 +570,22 @@ def list_issues(
     if identity_key:
         where.append("identity_key = ?")
         params.append(identity_key)
-    clause = (" WHERE " + " AND ".join(where)) if where else ""
+    if claimed:
+        where.append("NOT (kind = 'unclaimed_source' AND identity_key IN (SELECT value FROM json_each(?)))")
+        params.append(json.dumps(sorted(claimed)))
+    return (" WHERE " + " AND ".join(where)) if where else "", params
+
+
+def list_issues(
+    conn: sqlite3.Connection,
+    *,
+    kind: str = "",
+    identity_key: str = "",
+    claimed: set[str] | frozenset[str] = frozenset(),
+    limit: int = 500,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    clause, params = _issue_clause(kind, identity_key, claimed)
     rows = conn.execute(
         "SELECT * FROM health_issue" + clause + " ORDER BY kind, target LIMIT ? OFFSET ?",
         [*params, limit, offset],
@@ -527,6 +601,17 @@ def list_issues(
         }
         for row in rows
     ]
+
+
+def issue_total(
+    conn: sqlite3.Connection,
+    *,
+    kind: str = "",
+    identity_key: str = "",
+    claimed: set[str] | frozenset[str] = frozenset(),
+) -> int:
+    clause, params = _issue_clause(kind, identity_key, claimed)
+    return int(conn.execute("SELECT count(*) FROM health_issue" + clause, params).fetchone()[0])
 
 
 def list_roots(conn: sqlite3.Connection) -> list[dict[str, Any]]:

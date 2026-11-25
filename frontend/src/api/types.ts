@@ -1,6 +1,6 @@
 /** Response shapes of the local FastAPI server. */
 
-export type ConfidenceValue = 'recorded' | 'declared' | 'none';
+export type ConfidenceValue = 'recorded' | 'declared' | 'claimed' | 'none';
 
 export type IssueKind = 'dangling_link' | 'unclaimed_source' | 'duplicate_content';
 
@@ -19,12 +19,22 @@ export interface Provenance {
 
 export interface GitHubSource { repo: string; path: string }
 export interface VersionStatus {
-  status: 'release' | 'changed' | 'current' | 'unknown';
+  status: 'release' | 'changed' | 'current' | 'baseline' | 'unknown';
   checkedAt: number;
   installed: string;
   latest: string;
   url: string;
   detail: string;
+}
+export interface UpstreamQuota {
+  available: boolean;
+  mode: 'token' | 'anonymous';
+  source: '' | 'env' | 'config' | 'gh';
+  limit?: number;
+  remaining?: number;
+  reset?: number;
+  checkedAt?: number;
+  detail?: string;
 }
 export interface AISettings {
   baseUrl: string; model: string; hasKey: boolean; enabled: boolean;

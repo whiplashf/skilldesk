@@ -7,8 +7,9 @@ of the real path, ``loc:<sha256[:16]>``.
 
 Confidence is never guessed: ``recorded`` comes from a machine record (the
 ``skills`` CLI lockfile), ``declared`` from the skill itself (``skill-release.json``
-or frontmatter), and everything else stays ``none`` so the UI can ask the user to
-claim it instead of inventing an upstream.
+or frontmatter), ``claimed`` from the user answering the question in the UI, and
+everything else stays ``none`` so the UI can ask the user to claim it instead of
+inventing an upstream.
 """
 from __future__ import annotations
 
@@ -25,10 +26,11 @@ from .config import home
 
 RECORDED = "recorded"
 DECLARED = "declared"
+CLAIMED = "claimed"
 NONE = "none"
 
-CONFIDENCE_LABEL = {RECORDED: "已记录", DECLARED: "已声明", NONE: "待认领"}
-CONFIDENCE_ORDER = {RECORDED: 0, DECLARED: 1, NONE: 2}
+CONFIDENCE_LABEL = {RECORDED: "已记录", DECLARED: "已声明", CLAIMED: "已认领", NONE: "待认领"}
+CONFIDENCE_ORDER = {RECORDED: 0, DECLARED: 1, CLAIMED: 2, NONE: 3}
 
 _HOST_RE = re.compile(r"^[a-z0-9-]+(?:\.[a-z0-9-]+)+(?::\d+)?$", re.IGNORECASE)
 _METADATA_KEYS = ("repository", "repo", "homepage", "url", "source")
@@ -45,6 +47,8 @@ class Provenance:
     confidence: str = NONE
     evidence: str = ""
     tree: str = ""
+    installed_at: str = ""
+    folder_hash: str = ""
     local_root: str = ""
     checkout_remote: str = ""
     provider: str = ""
@@ -166,9 +170,16 @@ def infer_provenance(dir_name: str, real_dir: str, frontmatter: dict, lock: dict
         if entry.get("sourceType") == "local":
             local_source = _local_source_root(source)
             continue
-        if entry.get("sourceType") == "github" and re.fullmatch(r"[\w.-]+/[\w.-]+", source):
-            source = "https://github.com/" + source
-        normalized = normalize_source(source)
+        normalized = None
+        for candidate in (entry.get("sourceUrl"), entry.get("source")):
+            raw = str(candidate or "").strip()
+            if not raw:
+                continue
+            if entry.get("sourceType") == "github" and re.fullmatch(r"[\w.-]+/[\w.-]+", raw):
+                raw = "https://github.com/" + raw
+            normalized = normalize_source(raw)
+            if normalized:
+                break
         if not normalized:
             continue
         host, repo = normalized
@@ -180,7 +191,12 @@ def infer_provenance(dir_name: str, real_dir: str, frontmatter: dict, lock: dict
             ref=str(entry.get("commit") or ""),
             confidence=RECORDED,
             evidence="lockfile",
+            # Only a git tree SHA can be compared with the GitHub trees API. The
+            # skills CLI writes a 64-hex content hash here, which we keep as
+            # evidence but cannot diff against upstream.
             tree=digest if re.fullmatch(r"[0-9a-f]{40}", digest) else "",
+            installed_at=str(entry.get("installedAt") or ""),
+            folder_hash=digest,
             provider=str(entry.get("sourceType") or ""),
         )
 

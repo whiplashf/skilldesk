@@ -98,7 +98,8 @@ export function SkillDetail({ identityKey, generation, backHref, busy, onSave, o
       <div className="section-heading"><h2>GitHub 版本{!status && item.upstream.path && <small> · 尚未检查</small>}</h2>
         <button type="button" className="button" disabled={checking || !item.upstream.path} onClick={() => void checkVersion()}>
           {checking ? '正在检查…' : '检查版本'}</button></div>
-      {status ? <div className="version-result"><strong>{VERSION_LABELS[status.status]}</strong>
+      {status ? <div className={versionError ? 'version-result is-stale' : 'version-result'}>
+        {versionError ? <small>上次检查结果 · </small> : null}<strong>{VERSION_LABELS[status.status]}</strong>
         {(status.installed || status.latest) && <span className="mono">{[status.installed, status.latest].filter(Boolean).join(' → ')}</span>}
         <p>{status.detail} · {formatDateTime(status.checkedAt)}</p>
         {status.url && <a href={status.url} target="_blank" rel="noreferrer">查看 GitHub 发布说明</a>}</div>

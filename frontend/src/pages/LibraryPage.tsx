@@ -96,6 +96,7 @@ export function LibraryPage({ selectedKey, onOpenSkill, generation, onScanned }:
     pending.current = true; setBusy(true); setMessage('');
     try {
       const updated = await api.patch(item, changes);
+      if ('mine' in changes || 'github' in changes) onScanned();
       if (selectedKey === item.identity_key && ((view === 'favorites' && !updated.favorite) ||
           (view === 'mine' && !updated.mine) || (view === 'github' && updated.mine))) navigate(libraryHref());
       refreshData();

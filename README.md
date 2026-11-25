@@ -32,6 +32,8 @@ pnpm --dir frontend build
 
 仓库分组优先采用你在详情中关联的 GitHub 仓库。自写 skill 可以从本地 Git 工作目录识别来源，同名的独立本地仓库用路径区分。缺少仓库信息的条目集中在「未关联仓库」。
 
+给缺少来源记录的 skill 勾选「我写的」或补全 GitHub 坐标后，安装健康中的待认领数量随即更新。版本检查优先使用已安装的提交或目录指纹。缺少安装证据时会标记为「已建立基线」，后续可判断上游是否变化。设置里的「查询 GitHub 额度」由你手动触发。
+
 ## 扫描范围与数据
 
 默认扫描用户级的 Codex、Claude Code、OpenCode 和共享 `.agents/skills`，包括 Codex 的 `.system` 子目录。对于在 Codex 配置里明确启用、且能唯一确定安装版本的插件，也会读取其清单中声明的 skill 目录。设置中添加的项目会扫描其 `.agents/skills`、`.claude/skills` 和 `.opencode/skills`。Agent 范围表示对应客户端可读取的安装位置。私有插件目录或其他客户端可通过 `extraRoots` 指定目录和 Agent。
