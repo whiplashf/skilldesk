@@ -355,6 +355,9 @@ def create_app(db_path: str | Path | None = None, *, remote_token: str | None = 
             return upstream.check(item, source, action.force)
         except ValueError as error:
             raise HTTPException(400, str(error))
+        except upstream.QuotaExhausted as error:
+            until = time.strftime("%H:%M", time.localtime(error.reset))
+            raise HTTPException(429, f"GitHub 检查额度已用完（匿名每小时 60 次），约 {until} 恢复") from error
         except httpx.HTTPStatusError as error:
             if error.response.status_code == 429 or (
                 error.response.status_code == 403 and error.response.headers.get("x-ratelimit-remaining") == "0"

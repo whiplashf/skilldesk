@@ -66,6 +66,8 @@ CREATE TABLE provenance(
     path TEXT NOT NULL,
     ref TEXT NOT NULL,
     tree TEXT NOT NULL,
+    installed_at TEXT NOT NULL,
+    folder_hash TEXT NOT NULL,
     local_root TEXT NOT NULL,
     checkout_remote TEXT NOT NULL,
     provider TEXT NOT NULL,
@@ -162,8 +164,8 @@ def rebuild(result: ScanResult, issues: list[Issue], path: Path | str | None = N
             ],
         )
         conn.executemany(
-            "INSERT INTO provenance(identity_key, host, repo, path, ref, tree, local_root, checkout_remote, "
-            "provider, confidence, evidence) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO provenance(identity_key, host, repo, path, ref, tree, installed_at, folder_hash, "
+            "local_root, checkout_remote, provider, confidence, evidence) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             [
                 (
                     skill.identity_key,
@@ -172,6 +174,8 @@ def rebuild(result: ScanResult, issues: list[Issue], path: Path | str | None = N
                     skill.provenance.path,
                     skill.provenance.ref,
                     skill.provenance.tree,
+                    skill.provenance.installed_at,
+                    skill.provenance.folder_hash,
                     skill.provenance.local_root,
                     skill.provenance.checkout_remote,
                     skill.provenance.provider,
@@ -292,7 +296,8 @@ def _row_to_item(row: sqlite3.Row) -> dict[str, Any]:
             "repo": row["repo"] if "repo" in keys else "",
             "path": row["path"] if "path" in keys else "",
             "ref": row["ref"] if "ref" in keys else "",
-            "tree": row["tree"] or "",
+            "tree": (row["tree"] or "") if "tree" in keys else "",
+            "installedAt": (row["installed_at"] or "") if "installed_at" in keys else "",
             "localRoot": row["local_root"] or "",
             "checkoutRemote": row["checkout_remote"] or "",
             "provider": row["provider"] or "",

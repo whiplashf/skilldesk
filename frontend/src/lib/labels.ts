@@ -114,5 +114,6 @@ export const VERSION_LABELS = {
   release: '有新版本',
   changed: '内容有变化',
   current: '已是最新',
+  baseline: '已记录基线',
   unknown: '待确认版本',
 } as const;

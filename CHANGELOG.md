@@ -2,6 +2,9 @@
 
 ## 未发布 · 本机技能库
 
+- 版本检查有了真正的**安装基线**：新增 `backend/skilldesk/baselines.py`，首次检查时记录上游目录的 git tree SHA 与本地目录指纹（存 `~/.local/state/skilldesk/baselines.json`，删掉只丢历史不丢数据）。之后每次检查即可回答两件事：上游目录有没有变、本地副本有没有被手改（`localModified`，详情里会附一句说明）。
+- 目录指纹改为「本地目录 vs 上游当前目录」直比，这台机器上 GitHub 来源的 51 个 skill 立刻从"待确认版本"变成可比对；没有可比记录时状态是新增的 **已记录基线**，而不是假装"已是最新"。
+- 顺带修掉配额浪费：仓库级响应（HEAD、递归 tree、releases）按进程缓存，`force` 只绕过单个 skill 的结果缓存 —— 否则"检查本页 50 个"会花掉 150 次请求（匿名配额 60/小时）。索引 schema 升到 4，多存 `installedAt`（用于"安装后仓库无新提交"这种保守判断）。
 - 修复：经本机反向代理（authgate 等）访问时一律被「仅允许本机访问」拦掉。新增 `SKILLDESK_TRUSTED_PROXY=1`：只有**回环对端**转发的请求才放行公网 Host，直连远程依旧拒绝；写操作仍要会话令牌。配套把 uvicorn 的 `proxy_headers` 关掉——否则它会把对端地址改写成 `X-Forwarded-For`，正是反向代理提供的那个值，拿它判断可信度等于没判断。
 - 修复：shell 里形态异常的代理变量（实测 `NO_PROXY` 含 `[::1]`）会让 httpx 在构造阶段抛 `InvalidURL`，AI 翻译与 GitHub 版本检查都直接失败。出站请求改为自行解析代理（`SKILLDESK_PROXY` > `HTTPS_PROXY` > `HTTP_PROXY`）、回环地址永不走代理、坏代理值降级为直连。
 - 技能库采用绿色目录和并排阅读布局。「GitHub 引入」和「我写的」默认按来源仓库展示，支持组内分页和切换回平铺清单。

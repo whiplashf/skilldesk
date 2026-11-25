@@ -45,6 +45,8 @@ class Provenance:
     confidence: str = NONE
     evidence: str = ""
     tree: str = ""
+    installed_at: str = ""
+    folder_hash: str = ""
     local_root: str = ""
     checkout_remote: str = ""
     provider: str = ""
@@ -180,7 +182,12 @@ def infer_provenance(dir_name: str, real_dir: str, frontmatter: dict, lock: dict
             ref=str(entry.get("commit") or ""),
             confidence=RECORDED,
             evidence="lockfile",
+            # Only a git tree SHA can be compared with the GitHub trees API. The
+            # skills CLI writes a 64-hex content hash here, which we keep as
+            # evidence but cannot diff against upstream.
             tree=digest if re.fullmatch(r"[0-9a-f]{40}", digest) else "",
+            installed_at=str(entry.get("installedAt") or ""),
+            folder_hash=digest,
             provider=str(entry.get("sourceType") or ""),
         )
 

@@ -19,7 +19,7 @@ export interface Provenance {
 
 export interface GitHubSource { repo: string; path: string }
 export interface VersionStatus {
-  status: 'release' | 'changed' | 'current' | 'unknown';
+  status: 'release' | 'changed' | 'current' | 'baseline' | 'unknown';
   checkedAt: number;
   installed: string;
   latest: string;
