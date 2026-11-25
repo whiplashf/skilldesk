@@ -201,3 +201,11 @@ export interface FilesResponse {
 
 export interface PromptText { title: string; category: string; body: string }
 export interface SavedPrompt extends PromptText { id: string; revision: number; updatedAt: number }
+export interface PromptPublication {
+  repository: string;
+  branch: string;
+  state: 'new' | 'update' | 'current';
+  base: string;
+  url: string;
+  previous?: PromptText;
+}
