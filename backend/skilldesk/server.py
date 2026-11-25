@@ -190,11 +190,35 @@ def _file_kind(name: str) -> str:
     return "binary"
 
 
+LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "testserver"}
+LOOPBACK_PEERS = {"127.0.0.1", "::1", "testclient"}
+
+
+def trusted_proxy_enabled() -> bool:
+    """Whether requests relayed by a local reverse proxy may reach the app."""
+    return os.environ.get("SKILLDESK_TRUSTED_PROXY", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def request_is_local(request: Request, trusted_proxy: bool) -> bool:
+    """Direct requests must be addressed to a loopback host.
+
+    Behind a local reverse proxy (authgate and friends) the ``Host`` header is the
+    public address, so the peer address decides instead: only a loopback peer can
+    have relayed the request, and the proxy already handled authentication.
+    """
+    if request.url.hostname in LOOPBACK_HOSTS:
+        return True
+    if trusted_proxy:
+        return bool(request.client) and request.client.host in LOOPBACK_PEERS
+    return False
+
+
 def create_app(db_path: str | Path | None = None, *, remote_token: str | None = None) -> FastAPI:
     app = FastAPI(title="skilldesk", version=__version__, docs_url="/api/docs", redoc_url=None)
     database = Path(db_path) if db_path else index_path()
     ensure_index(database)
     write_token = secrets.token_urlsafe(32)
+    trusted_proxy = trusted_proxy_enabled()
 
     @app.middleware("http")
     async def local_session(request: Request, call_next):
@@ -207,9 +231,7 @@ def create_app(db_path: str | Path | None = None, *, remote_token: str | None = 
             if not auth.startswith("Basic ") or not hmac.compare_digest(password.encode(), remote_token.encode()):
                 return JSONResponse({"detail": "请输入远程访问令牌作为密码"}, status_code=401,
                                     headers={"WWW-Authenticate": 'Basic realm="Skilldesk"'})
-        elif request.url.hostname not in {"127.0.0.1", "localhost", "::1"} and not (
-            request.client and request.client.host == "testclient" and request.url.hostname == "testserver"
-        ):
+        elif not request_is_local(request, trusted_proxy):
             return JSONResponse({"detail": "仅允许本机访问"}, status_code=403)
         if request.method not in {"GET", "HEAD", "OPTIONS"}:
             origin = request.headers.get("origin")
