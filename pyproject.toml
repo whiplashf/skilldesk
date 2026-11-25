@@ -19,6 +19,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.4"]
+browser = ["pytest>=8", "playwright>=1.44"]
 
 [project.scripts]
 skilldesk = "skilldesk.cli:main"

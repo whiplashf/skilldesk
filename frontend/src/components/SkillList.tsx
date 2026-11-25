@@ -67,20 +67,25 @@ export function SkillList({
         {state.status === 'error' ? <ErrorState message={state.error} onRetry={onRefresh} /> : null}
 
         {state.status === 'ready' && state.data.items.length === 0 ? (
-          hasFilters ? (
+          view === 'favorites' && !state.data.hasFavorites ? (
+            <EmptyState title="还没有收藏" hint="点技能旁的 ☆，就能在这里找到它。" />
+          ) : hasFilters ? (
             <EmptyState
-              title={view === 'mine' ? '当前范围没有自写 skill' : '没有匹配的 skill'}
-              hint={view === 'mine' ? '在「全部」中打开你写的 skill，展开「来源与可用范围」并勾选「我写的」。' : '当前筛选条件下没有任何结果。'}
-              actionLabel={view === 'mine' ? '查看全部技能' : '清空筛选'}
+              title="没有匹配的 skill"
+              hint="可以调整搜索词或清除当前筛选。"
+              actionLabel="清空筛选"
               onAction={onClearFilters}
             />
+          ) : view === 'mine' || view === 'github' ? (
+            <EmptyState title={view === 'mine' ? '还没有标为自写的 skill' : '还没有跟踪的 GitHub skill'}
+              hint={view === 'mine' ? '打开技能的「来源与可用范围」，勾选「我写的」。' : '打开技能的「来源与可用范围」，可以关联它的 GitHub 仓库。'}
+              actionLabel="查看全部技能" actionHref={HASH.library} />
           ) : (
-            <EmptyState
-              title="本机没有发现 skill"
-              hint="检查设置里已探测的宿主根，或先运行 skilldesk scan 重建索引。"
-              actionLabel="查看宿主根"
-              actionHref={HASH.settings}
-            />
+            <div className="state"><h3 className="state-title">本机还没有发现 skill</h3>
+              <p className="state-hint">可以添加已有 skill 的项目，或从你知道的仓库安装。</p>
+              <div className="empty-actions"><a className="button" href={HASH.settings + '?section=projects'}>添加项目</a>
+                <a className="button" href={HASH.settings + '?section=install'}>从已知仓库安装</a></div>
+            </div>
           )
         ) : null}
 

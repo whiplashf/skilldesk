@@ -71,6 +71,7 @@ CREATE TABLE provenance(
     local_root TEXT NOT NULL,
     checkout_remote TEXT NOT NULL,
     provider TEXT NOT NULL,
+    source_label TEXT NOT NULL,
     confidence TEXT NOT NULL,
     evidence TEXT NOT NULL
 );
@@ -81,7 +82,8 @@ CREATE TABLE health_issue(
     identity_key TEXT NOT NULL,
     target TEXT NOT NULL,
     detail TEXT NOT NULL,
-    fixable INTEGER NOT NULL
+    fixable INTEGER NOT NULL,
+    context TEXT NOT NULL
 );
 
 CREATE INDEX idx_skill_name ON skill(name COLLATE NOCASE);
@@ -165,7 +167,7 @@ def rebuild(result: ScanResult, issues: list[Issue], path: Path | str | None = N
         )
         conn.executemany(
             "INSERT INTO provenance(identity_key, host, repo, path, ref, tree, installed_at, folder_hash, "
-            "local_root, checkout_remote, provider, confidence, evidence) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "local_root, checkout_remote, provider, source_label, confidence, evidence) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             [
                 (
                     skill.identity_key,
@@ -179,16 +181,28 @@ def rebuild(result: ScanResult, issues: list[Issue], path: Path | str | None = N
                     skill.provenance.local_root,
                     skill.provenance.checkout_remote,
                     skill.provenance.provider,
+                    skill.provenance.source_label,
                     skill.provenance.confidence,
                     skill.provenance.evidence,
                 )
                 for skill in result.skills
             ],
         )
+        access = {str(root.path): [a for a, _scope in root.access] for root in result.roots}
+        contexts = {
+            skill.identity_key: {"name": skill.name, "location": skill.realpath,
+                                 "agents": sorted({a for p in skill.placements for a in access.get(p.host_root, [])})}
+            for skill in result.skills
+        }
+        contexts.update({
+            d.entry_path: {"name": d.entry, "location": d.entry_path, "missingTarget": d.target,
+                           "agents": access.get(d.host_root, [])} for d in result.dangling
+        })
         conn.executemany(
-            "INSERT INTO health_issue(id, kind, identity_key, target, detail, fixable) VALUES (?,?,?,?,?,?)",
+            "INSERT INTO health_issue(id, kind, identity_key, target, detail, fixable, context) VALUES (?,?,?,?,?,?,?)",
             [
-                (issue.id, issue.kind, issue.identity_key, issue.target, issue.detail, int(issue.fixable))
+                (issue.id, issue.kind, issue.identity_key, issue.target, issue.detail, int(issue.fixable),
+                 json.dumps(contexts.get(issue.identity_key or issue.target, {})))
                 for issue in issues
             ],
         )
@@ -279,7 +293,7 @@ def counts(conn: sqlite3.Connection, claimed: set[str] | frozenset[str] = frozen
 _ITEM_SQL = """
 SELECT s.identity_key, s.name, s.dir_name, s.description, s.license, s.content_hash,
        s.bytes, s.lines, s.mtime, s.realpath, s.primary_kind,
-       p.host, p.repo, p.path, p.ref, p.tree, p.local_root, p.checkout_remote, p.provider, p.confidence, p.evidence,
+       p.host, p.repo, p.path, p.ref, p.tree, p.local_root, p.checkout_remote, p.provider, p.source_label, p.confidence, p.evidence,
        (SELECT json_group_array(DISTINCT json_object('agent', a.agent, 'scope', a.scope))
         FROM placement pl JOIN agent_access a ON pl.host_root = a.host_root
         WHERE pl.identity_key = s.identity_key) AS access,
@@ -318,6 +332,7 @@ def _row_to_item(row: sqlite3.Row) -> dict[str, Any]:
             "localRoot": row["local_root"] or "",
             "checkoutRemote": row["checkout_remote"] or "",
             "provider": row["provider"] or "",
+            "sourceLabel": row["source_label"],
             "confidence": (row["confidence"] if "confidence" in keys else "") or "none",
             "evidence": row["evidence"] if "evidence" in keys else "",
             "label": _provenance_label(row, keys),
@@ -331,7 +346,7 @@ def _provenance_label(row: sqlite3.Row, keys: set[str]) -> str:
     host = row["host"] or ""
     repo = row["repo"] or ""
     if not host and not repo:
-        return ""
+        return row["source_label"]
     return f"{host}/{repo}" if host else repo
 
 
@@ -342,8 +357,9 @@ def repository_for(provenance: sqlite3.Row | dict, asset: dict) -> dict[str, str
         host, repo = "github.com", asset["github"]["repo"]
     elif provenance["checkoutRemote"]:
         host, _, repo = provenance["checkoutRemote"].partition("/")
-    elif provenance["provider"] in {"well-known", "mintlify"}:
-        host, repo = "", ""
+    elif provenance["provider"] in {"well-known", "mintlify"} or (not host and provenance["provider"]):
+        name = provenance["sourceLabel"]
+        return {"key": f"provider:{name}", "name": name, "location": "提供方"}
     if host and repo:
         host = host.lower()
         if host == "github.com":
@@ -363,7 +379,7 @@ def _repository_page(
     # Group the complete filtered inventory first. Only the active group's page needs full skill records.
     rows = conn.execute(
         "SELECT s.identity_key, p.host, p.repo, p.local_root AS localRoot, p.checkout_remote AS checkoutRemote, "
-        "p.provider FROM skill s "
+        "p.provider, p.source_label AS sourceLabel FROM skill s "
         "JOIN provenance p USING(identity_key)" + clause + " ORDER BY s.name COLLATE NOCASE, s.identity_key",
         params,
     )
@@ -376,7 +392,9 @@ def _repository_page(
         group["members"].append(identity)
         if identity == focus:
             focus_group = repo["key"]
-    ordered = sorted(groups.values(), key=lambda g: (g["key"] == "unassigned", g["name"].casefold(), g["key"]))
+    ordered = sorted(groups.values(), key=lambda g: (
+        g["key"] == "unassigned", g["key"].startswith("provider:"), g["name"].casefold(), g["key"]
+    ))
     active = focus_group or (repository if repository in groups else next((g["key"] for g in ordered), ""))
     members = groups[active]["members"] if active else []
     if focus_group:
@@ -440,10 +458,12 @@ def list_skills(
         where.append(f"(p.host = 'github.com' OR s.identity_key IN ({annotated})) AND s.identity_key NOT IN ({annotated})")
         params.append(json.dumps([key for key, value in annotations.items() if value.get("github")]))
         params.append(json.dumps([key for key, value in annotations.items() if value.get("mine")]))
+    claims = library.claims(annotations)
     if source:
-        where.append("(p.host || '/' || p.repo) = ?")
-        params.append(source)
-    claimed = sorted(library.claims(annotations))
+        where.append(f"(p.source_label = ? OR (p.host || '/' || p.repo) = ? OR "
+                     f"(p.confidence = 'none' AND s.identity_key IN ({annotated})))")
+        params.extend((source, source, json.dumps([k for k, c in claims.items() if c["label"] == source])))
+    claimed = sorted(claims)
     if confidence:
         if confidence == "claimed":
             where.append(f"s.identity_key IN ({annotated}) AND p.confidence = 'none'")
@@ -511,12 +531,14 @@ def facets(conn: sqlite3.Connection, assets: dict | None = None) -> dict[str, li
             "SELECT kind, count(DISTINCT identity_key) AS n FROM placement GROUP BY kind ORDER BY n DESC"
         )
     ]
-    sources = [
-        {"value": f"{row['host']}/{row['repo']}", "label": f"{row['host']}/{row['repo']}", "count": row["n"]}
-        for row in conn.execute(
-            "SELECT host, repo, count(*) AS n FROM provenance WHERE repo <> '' GROUP BY host, repo ORDER BY n DESC"
-        )
-    ]
+    source_counts = dict(conn.execute(
+        "SELECT source_label, count(*) FROM provenance WHERE source_label <> '' GROUP BY source_label"
+    ))
+    for key in claimed:
+        label = library.claim_of(assets[key])["label"]
+        source_counts[label] = source_counts.get(label, 0) + 1
+    sources = [{"value": label, "label": label, "count": count} for label, count in
+               sorted(source_counts.items(), key=lambda pair: (-pair[1], pair[0]))]
     confidence = []
     for row in conn.execute("SELECT confidence, count(*) AS n FROM provenance GROUP BY confidence ORDER BY n DESC"):
         count = int(row["n"]) - (len(claimed) if row["confidence"] == "none" else 0)
@@ -598,6 +620,7 @@ def list_issues(
             "target": row["target"],
             "detail": row["detail"],
             "fixable": bool(row["fixable"]),
+            **json.loads(row["context"]),
         }
         for row in rows
     ]
@@ -612,6 +635,12 @@ def issue_total(
 ) -> int:
     clause, params = _issue_clause(kind, identity_key, claimed)
     return int(conn.execute("SELECT count(*) FROM health_issue" + clause, params).fetchone()[0])
+
+
+def has_installed_favorites(conn: sqlite3.Connection, assets: dict) -> bool:
+    keys = [key for key, asset in assets.items() if asset.get("favorite")]
+    return bool(conn.execute("SELECT 1 FROM skill WHERE identity_key IN (SELECT value FROM json_each(?)) LIMIT 1",
+                             (json.dumps(keys),)).fetchone())
 
 
 def list_roots(conn: sqlite3.Connection) -> list[dict[str, Any]]:

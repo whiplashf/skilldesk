@@ -34,6 +34,7 @@ class HostRoot:
     enabled: bool = True
     exists: bool = False
     access: list[tuple[str, str]] = field(default_factory=list)
+    distribution: str = ""
 
     @property
     def key(self) -> str:
@@ -155,6 +156,11 @@ def discover_roots(config: Config) -> list[HostRoot]:
         root = by_path.setdefault(
             real, HostRoot(Path(real), kind, label, STORE_PRIORITY.get(kind, 9), exists=Path(real).is_dir())
         )
+        if kind == "codex":
+            if label.startswith("Codex · "):
+                root.distribution = "Codex 插件 · " + label.removeprefix("Codex · ")
+            elif label in {"codex", "codex ($CODEX_HOME)"}:
+                root.distribution = "Codex 内置"
         location = path.parent.name.lstrip(".") if kind == "project" else kind
         scope = str(path.parent.parent.absolute()) if kind == "project" else ""
         agents = clients.get(location, ())

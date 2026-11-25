@@ -57,12 +57,18 @@ class Provenance:
     def label(self) -> str:
         """Human facing ``host/repo`` (``repo`` alone when the host is unknown)."""
         if not self.host and not self.repo:
-            return ""
+            return self.provider
         return f"{self.host}/{self.repo}" if self.host else self.repo
 
     @property
     def is_known(self) -> bool:
         return bool(self.host and self.repo)
+
+    @property
+    def source_label(self) -> str:
+        if self.provider in {"well-known", "mintlify"}:
+            return self.host
+        return self.label
 
 
 def clean_path(value: str) -> str:

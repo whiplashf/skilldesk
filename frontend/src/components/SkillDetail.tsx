@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../api/endpoints';
 import { ApiError, describeError } from '../api/client';
-import type { AssetChanges, MaintenanceResult, SkillDetail as Detail, SkillSummary } from '../api/types';
+import type { MaintenanceResult } from '../api/types';
 import { accessSummary, healthLabel, VERSION_LABELS } from '../lib/labels';
 import { formatDateTime } from '../lib/format';
-import { HASH } from '../lib/route';
+import { OriginEditor, type Save } from './OriginEditor';
+import { TranslationForm } from './TranslationSettings';
 import { useApi } from '../lib/useApi';
 import { ErrorState } from './ErrorState';
 import { DetailSkeleton } from './Skeleton';
@@ -12,39 +13,6 @@ import { ProvenanceBlock } from './ProvenanceBlock';
 import { PlacementsBlock } from './PlacementsBlock';
 import { SkillBody, type DocumentTarget } from './SkillBody';
 import { SupportFiles } from './SupportFiles';
-
-type Save = (item: SkillSummary, changes: AssetChanges) => Promise<boolean>;
-
-function OriginEditor({ data, save, busy }: { data: Detail; save: Save; busy: boolean }) {
-  const [editing, setEditing] = useState(false);
-  const [repo, setRepo] = useState('');
-  const [path, setPath] = useState('');
-  const [mine, setMine] = useState(data.mine);
-  useEffect(() => setMine(data.mine), [data.mine]);
-  return <div className="origin-editor">
-    <label className="check-field"><input type="checkbox" checked={mine} disabled={busy}
-      onChange={async event => {
-        const selected = event.target.checked;
-        setMine(selected);
-        if (!await save(data, { mine: selected })) setMine(data.mine);
-      }} /> 我写的</label>
-    {data.upstream && <p className="source-coordinate">GitHub · {data.upstream.repo} / {data.upstream.path || '路径待确认'}</p>}
-    {editing ? <form className="settings-form" onSubmit={async event => {
-      event.preventDefault();
-      if (await save(data, { github: { repo, path } })) setEditing(false);
-    }}>
-      <label>GitHub 仓库<input required placeholder="owner/repo" value={repo} onChange={e => setRepo(e.target.value)} /></label>
-      <label>仓库内路径<input required placeholder="skills/example/SKILL.md" value={path} onChange={e => setPath(e.target.value)} /></label>
-      <div className="form-actions"><button className="button" disabled={busy}>保存来源</button>
-        <button type="button" className="button" onClick={() => setEditing(false)}>取消</button>
-        <button type="button" className="link-button" disabled={busy} onClick={async () => {
-          if (await save(data, { github: null })) setEditing(false);
-        }}>恢复扫描来源</button></div>
-    </form> : <button className="button" type="button" onClick={() => {
-      setRepo(data.upstream?.repo ?? ''); setPath(data.upstream?.path || 'SKILL.md'); setEditing(true);
-    }}>{data.upstream ? '编辑 GitHub 来源' : '关联 GitHub 来源'}</button>}
-  </div>;
-}
 
 interface Props {
   backHref: string;
@@ -55,12 +23,17 @@ interface Props {
 
 export function SkillDetail({ identityKey, generation, backHref, busy, onSave, onFile, onVersion, onMaintenance }: Props) {
   const detail = useApi(signal => api.skill(identityKey, signal), [identityKey, generation], true);
-  const files = useApi(signal => api.files(identityKey, signal), [identityKey, generation], true);
+  const settings = useApi(api.aiSettings, [], true);
+  const [showFiles, setShowFiles] = useState(false);
+  const translateButton = useRef<HTMLButtonElement>(null);
+  const active = useRef(false);
+  const editingTranslation = useRef(false);
+  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   const [translation, setTranslation] = useState<{ hash: string; html: string }>();
   const [chinese, setChinese] = useState(false);
   const [translating, setTranslating] = useState(false);
   const [translateError, setTranslateError] = useState('');
-  const [needsConfig, setNeedsConfig] = useState(false);
+  const [configOpen, setConfigOpen] = useState(false);
   const [checking, setChecking] = useState(false);
   const [versionError, setVersionError] = useState('');
   if (detail.state.status === 'loading') return <DetailSkeleton />;
@@ -68,21 +41,34 @@ export function SkillDetail({ identityKey, generation, backHref, busy, onSave, o
     <ErrorState message={detail.state.error} onRetry={detail.reload} /></div>;
   const item = detail.state.data;
   const status = item.versionStatus;
+  const ai = settings.state.data;
+  const copies = Array.from(new Map(item.placements.filter(p => p.installedSource).map(p => [p.realpath, p])).values());
+  const different = copies.filter(p => p.installedSource && item.upstream &&
+    (p.installedSource.host !== 'github.com' || p.installedSource.repo.toLowerCase() !== item.upstream.repo.toLowerCase()
+      || p.installedSource.path !== item.upstream.path));
   const translated = translation?.hash === item.content_hash ? translation.html : undefined;
   const showChinese = chinese && translated !== undefined;
+  function editTranslation(open: boolean) {
+    editingTranslation.current = open;
+    setConfigOpen(open);
+    if (!open) translateButton.current?.focus({ preventScroll: true });
+  }
   async function toggleTranslation() {
-    setTranslateError(''); setNeedsConfig(false);
+    setTranslateError('');
     if (translated !== undefined) { setChinese(!showChinese); return; }
     setTranslating(true);
     try {
       const result = await api.translate(identityKey);
       setTranslation({ hash: item.content_hash, html: result.html }); setChinese(true);
-    } catch (error) { setTranslateError(describeError(error)); setNeedsConfig(error instanceof ApiError && error.status === 501); }
+    } catch (error) {
+      setTranslateError(describeError(error));
+      if (error instanceof ApiError && error.status === 501) { settings.reload(); editTranslation(true); }
+    }
     finally { setTranslating(false); }
   }
   async function checkVersion() {
     setChecking(true); setVersionError('');
-    try { await api.checkVersion(identityKey, Boolean(status)); onVersion(); }
+    try { await api.checkVersion(identityKey); onVersion(); }
     catch (error) { setVersionError(describeError(error)); }
     finally { setChecking(false); }
   }
@@ -101,6 +87,12 @@ export function SkillDetail({ identityKey, generation, backHref, busy, onSave, o
           {checking ? '正在检查…' : '检查版本'}</button></div>
       {new Set(item.placements.map(p => p.realpath)).size > 1 && <p className="block-note">
         此次比较使用 <code>{item.realpath}</code>。可在各安装位置预览对应副本的变更。</p>}
+      {different.length > 0 && <div className="source-comparison">
+        <p>跟踪来源 <strong>github.com/{item.upstream.repo}</strong> · <code>{item.upstream.path}</code></p>
+        {different.map(p => <p key={p.realpath}>此副本安装自 <strong>{p.installedSource!.host}/{p.installedSource!.repo}</strong>
+          {' · '}<code>{p.installedSource!.path}</code>。升级使用此安装来源。
+          {copies.length > 1 && <small>{p.realpath}</small>}</p>)}</div>}
+      {!copies.length && <p className="block-note">跟踪 {item.upstream.repo}。本机没有可用于升级的 Git 安装记录。</p>}
       {status ? <div className={versionError ? 'version-result is-stale' : 'version-result'}>
         {versionError ? <small>上次检查结果 · </small> : null}<strong>{VERSION_LABELS[status.status]}</strong>
         {(status.installed || status.latest) && <span className="mono">{[status.installed, status.latest].filter(Boolean).join(' → ')}</span>}
@@ -112,21 +104,36 @@ export function SkillDetail({ identityKey, generation, backHref, busy, onSave, o
     <details className="reader-fold"><summary>来源与可用范围</summary>
       <OriginEditor data={item} save={onSave} busy={busy} />
       <ProvenanceBlock provenance={item.provenance} confidenceLabel={item.confidenceLabel} />
-      <PlacementsBlock placements={item.placements} identityKey={identityKey} onApplied={onMaintenance} />
+      <PlacementsBlock placements={item.placements} identityKey={identityKey} onApplied={onMaintenance}
+        differingCopies={new Set(different.map(p => p.realpath))} />
       {item.issues.map(issue => <p className="block-note" key={issue.id}>{healthLabel(issue.kind)} · {issue.detail}</p>)}
       <p className="block-note">许可证 {item.license || '未声明'} · {item.lines} 行 · {formatDateTime(item.mtime)}</p>
     </details>
     <section className="reader-body" aria-label="SKILL.md 正文">
       <div className="reader-toolbar"><button type="button" className="link-button mono"
         onClick={() => onFile({ rel: 'SKILL.md', raw: true })}>SKILL.md 源文件</button>
-        <button type="button" className="button translate-action" disabled={translating} onClick={() => void toggleTranslation()}>
-          {translating ? '正在翻译…' : showChinese ? '查看原文' : translated !== undefined ? '查看中文译文' : 'AI 翻译成中文'}
+        <button ref={translateButton} type="button" className="button translate-action" disabled={translating || settings.state.status === 'loading'}
+          aria-expanded={!ai?.enabled || configOpen ? configOpen : undefined} onClick={() => {
+            if (configOpen) editTranslation(false);
+            else if (translated !== undefined || ai?.enabled) void toggleTranslation();
+            else if (settings.state.status === 'error') settings.reload();
+            else editTranslation(true);
+          }}>
+          {translating ? '正在翻译…' : configOpen ? '收起翻译设置' : showChinese ? '查看原文' : translated !== undefined ? '查看中文译文'
+            : ai ? (ai.enabled ? 'AI 翻译成中文' : '设置中文翻译') : settings.state.status === 'error' ? '重试读取翻译设置' : '正在读取翻译设置…'}
         </button></div>
-      {translateError && <p className="action-message" role="status">{translateError} {needsConfig && <a href={HASH.settings}>打开翻译设置</a>}</p>}
+      {settings.state.status === 'error' && <p role="alert">{settings.state.error}</p>}
+      {translateError && <p className="action-message" role="alert">{translateError} {ai && !configOpen &&
+        <button type="button" className="link-button" onClick={() => editTranslation(true)}>检查翻译设置</button>}</p>}
+      {configOpen && ai && <TranslationForm current={ai} resume onSaved={saved => {
+        if (!active.current) return;
+        settings.reload();
+        if (saved.enabled && editingTranslation.current) { editTranslation(false); void toggleTranslation(); }
+      }} />}
       <SkillBody html={showChinese ? translated : item.html} identityKey={identityKey} onFile={onFile} />
     </section>
-    <details className="reader-fold"><summary>支持文件{files.state.status === 'ready' ? ' · ' + files.state.data.items.length : ''}</summary>
-      <SupportFiles state={files.state} onOpenFile={rel => onFile({ rel })} onRetry={files.reload} />
+    <details className="reader-fold" onToggle={event => setShowFiles(event.currentTarget.open)}><summary>支持文件</summary>
+      {showFiles && <SupportFiles identityKey={identityKey} generation={generation} onOpenFile={rel => onFile({ rel })} />}
     </details>
   </article>;
 }

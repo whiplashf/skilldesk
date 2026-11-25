@@ -58,17 +58,16 @@ def _build_index() -> dict[str, Any]:
     result = scan(load_config())
     issues = detect(result.skills, result.dangling)
     meta = index_mod.rebuild(result, issues, index_path())
-    placements = sum(len(skill.placements) for skill in result.skills)
-    unclaimed = sum(1 for skill in result.skills if skill.provenance.confidence == "none")
-    by_kind: dict[str, int] = {}
-    for issue in issues:
-        by_kind[issue.kind] = by_kind.get(issue.kind, 0) + 1
+    conn = index_mod.connect(index_path())
+    try:
+        claimed = _claims(conn)
+        counts = index_mod.counts(conn, claimed)
+        by_kind = {kind: n for kind in HEALTH_KINDS if (n := index_mod.issue_total(conn, kind=kind, claimed=claimed))}
+    finally:
+        conn.close()
     return {
         **meta,
-        "skills": len(result.skills),
-        "placements": placements,
-        "dangling": len(result.dangling),
-        "unclaimed": unclaimed,
+        **counts,
         "issues_by_kind": by_kind,
         "roots": [
             {"path": str(root.path), "kind": root.kind, "exists": root.exists} for root in result.roots
@@ -123,7 +122,7 @@ def cmd_list(args: argparse.Namespace) -> int:
     rows = []
     for item in payload["items"]:
         provenance = item["provenance"]
-        source = provenance["label"] or "—"
+        source = provenance["sourceLabel"] or "—"
         confidence = CONFIDENCE_LABEL.get(provenance["confidence"], provenance["confidence"])
         rows.append(
             [
@@ -172,7 +171,7 @@ def cmd_show(args: argparse.Namespace) -> int:
     provenance = skill["provenance"]
     print(f"{skill['name']}  ({skill['dir_name']})")
     print(f"  identity   {skill['identity_key']}")
-    print(f"  source     {provenance['label'] or '—'}  [{CONFIDENCE_LABEL.get(provenance['confidence'])}]")
+    print(f"  source     {provenance['sourceLabel'] or '—'}  [{CONFIDENCE_LABEL.get(provenance['confidence'])}]")
     if provenance["evidence"]:
         print(f"  evidence   {provenance['evidence']}")
     if provenance["path"]:

@@ -14,7 +14,8 @@ interface Props {
 
 export function SkillRow({ item, index, selected, busy, grouped, healthLabels, onOpen, onFavorite }: Props) {
   const version = item.versionStatus;
-  const status = version ? VERSION_LABELS[version.status] : grouped ? '' : item.mine ? '我写的' : item.upstream ? 'GitHub' : '待确认来源';
+  const status = version ? VERSION_LABELS[version.status] : grouped ? '' : item.mine ? '我写的'
+    : item.upstream ? 'GitHub' : item.provenance.sourceLabel || '待确认来源';
   return (
     <li className={selected ? 'skill-entry is-current' : 'skill-entry'}>
       <button type="button" className="row" data-row-index={index} aria-current={selected || undefined}

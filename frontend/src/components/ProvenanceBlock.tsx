@@ -10,15 +10,17 @@ export interface ProvenanceBlockProps {
 
 export function ProvenanceBlock({ provenance, confidenceLabel }: ProvenanceBlockProps) {
   const claimed = provenance.label !== '';
+  const distributed = provenance.provider.startsWith('Codex ') || ['well-known', 'mintlify'].includes(provenance.provider);
 
   return (
     <section className="block">
       <h3 className="block-title">来源</h3>
       <dl className="kv">
         <div className="kv-row">
-          <dt>上游来源</dt>
-          <dd>{claimed ? <span className="mono break">{provenance.label}</span> : <span className="dim">未认领</span>}</dd>
+          <dt>{distributed ? '提供方' : '来源'}</dt>
+          <dd>{claimed ? <span className="mono break">{provenance.sourceLabel}</span> : <span className="dim">待确认</span>}</dd>
         </div>
+        {distributed && <div className="kv-row"><dt>上游仓库</dt><dd>安装记录未提供</dd></div>}
         {provenance.localRoot && <div className="kv-row">
           <dt>本地仓库</dt>
           <dd className="mono break">{provenance.localRoot}</dd>

@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from helpers import lock_entry, write_lockfile, write_skill
@@ -157,6 +158,8 @@ def test_unconfigured_translation_and_private_settings(app_client, monkeypatch):
         ("same", "same", "v1.2", "current"),
         ("old", "old", "v1.2", "changed"),
         ("old", "new", "v1.2", "release"),
+        ("old", "new", "alpha@v2.0", "release"),
+        ("old", "old", "alpha@v2.0", "changed"),
         ("old", "new", "unrelated@v1.2", "changed"),
     ],
 )
@@ -188,6 +191,61 @@ def test_github_release_requires_skill_evidence(tmp_path, baseline, released, sc
         raise AssertionError(endpoint)
 
     assert upstream.evaluate(item, source, get)["status"] == expected
+
+
+def test_manual_and_batch_checks_share_only_this_requests_evidence(fake_home, monkeypatch):
+    from collections import Counter
+
+    upstream.forget_caches()
+    store = fake_home / ".agents/skills"
+    names = ["alpha", "beta"]
+    for name in names:
+        write_skill(store, name, extra_frontmatter="version: 1.0\n")
+    records = {n: lock_entry("owner/pack", n + "/SKILL.md", commit="a" * 40) for n in names}
+    write_lockfile(fake_home, {n: {**v, "skilldeskTree": "b" * 40} for n, v in records.items()})
+    monkeypatch.setenv("SKILLDESK_GITHUB_TOKEN", "fixture")
+    calls = Counter()
+    releases = []
+    head_tree = "b" * 40
+
+    def respond(request):
+        endpoint = request.url.path.removeprefix("/repos/owner/pack").strip("/")
+        calls[endpoint] += 1
+        data = {
+            "": {"default_branch": "main"}, "commits/main": {"sha": "head"},
+            "git/trees/head": {"tree": [
+                obj for n in names for obj in ({"path": n, "type": "tree", "sha": head_tree},
+                                               {"path": n + "/SKILL.md", "type": "blob"})
+            ]}, "releases": releases,
+        }
+        return httpx.Response(200, json=data[endpoint])
+
+    monkeypatch.setattr(upstream, "http_client", lambda **kw: httpx.Client(transport=httpx.MockTransport(respond)))
+    with TestClient(create_app()) as client:
+        keys = [i["identity_key"] for i in client.get("/api/index").json()["items"]]
+        headers = {"X-Skilldesk-Token": client.get("/api/session").json()["token"]}
+        def single():
+            return client.post("/api/check", headers=headers, json={"identity_key": keys[0], "force": True}).json()
+
+        assert single()["status"] == "current"
+        head_tree = "c" * 40
+        assert single()["status"] == "changed"
+        releases.extend({"tag_name": n + "@v2.0", "html_url": "https://example.invalid/v2"} for n in names)
+        calls.clear()
+        result = client.post("/api/check-batch", headers=headers, json={"keys": keys}).json()["items"]
+        assert [row["result"]["status"] for row in result] == ["release", "release"]
+        assert calls == {"": 1, "commits/main": 1, "git/trees/head": 1, "releases": 1}
+        assert len({row["result"]["checkedAt"] for row in result}) == 1
+        releases.clear()
+        assert single()["status"] == "changed" and calls["releases"] == 2
+        before_failure = client.get("/api/skill/" + keys[0]).json()["versionStatus"]
+        def unavailable(request):
+            return httpx.Response(429)
+
+        monkeypatch.setattr(upstream, "http_client", lambda **kw: httpx.Client(transport=httpx.MockTransport(unavailable)))
+        failed = client.post("/api/check", headers=headers, json={"identity_key": keys[0], "force": True})
+        assert failed.status_code == 429
+        assert client.get("/api/skill/" + keys[0]).json()["versionStatus"] == before_failure
 
 
 def test_git_tree_hash_includes_support_files(tmp_path: Path):
@@ -284,3 +342,67 @@ def test_only_enabled_installed_codex_plugin_is_scanned(fake_home):
     skills = scan(Config()).skills
     assert [skill.name for skill in skills] == ["helper"]
     assert skills[0].primary_kind == "codex"
+    assert skills[0].provenance.source_label == "Codex 插件 · helper"
+    assert not skills[0].provenance.repo
+
+
+def test_distribution_and_claims_match_in_health_facets_and_cli(fake_home):
+    from skilldesk import cli
+
+    store = fake_home / ".agents/skills"
+    system = fake_home / ".codex/skills/.system"
+    built_in = write_skill(system, "bundled")
+    (store / "alias").symlink_to(built_in)
+    external = write_skill(fake_home / "own", "draft")
+    (system / "external").symlink_to(external)
+    write_skill(store, "office")
+    write_lockfile(fake_home, {"office": {"sourceType": "well-known", "sourceUrl": "https://open.feishu.cn/docs/office"}})
+    with TestClient(create_app()) as client:
+        token = client.get("/api/session").json()["token"]
+        for label in ["open.feishu.cn", "Codex 内置"]:
+            item, = client.get("/api/index", params={"source": label}).json()["items"]
+            assert item["provenance"]["sourceLabel"] == label and not item["upstream"]
+        issue, = client.get("/api/issues").json()["items"]
+        assert issue["name"] == "draft" and issue["agents"] == ["codex"]
+        client.patch("/api/assets/" + issue["identity_key"], json={"mine": True},
+                     headers={"If-Match": "0", "X-Skilldesk-Token": token}).raise_for_status()
+        summary = cli._build_index()
+        issues = client.get("/api/issues").json()
+        assert issues["counts"] == client.get("/api/health").json()["counts"]
+        assert issues["total"] == summary["issues"] == summary["unclaimed"] == 0
+        assert not issues["items"] and not summary["issues_by_kind"]
+        for option in client.get("/api/facets").json()["sources"]:
+            assert client.get("/api/index", params={"source": option["value"]}).json()["total"] == option["count"]
+
+
+def test_ordered_code_and_remote_images_survive_support_file_and_translation(fake_home, monkeypatch):
+    commands = "cd sample\n\tnpm test"
+    markdown = "3. Run\n   ~~~sh\n   cd sample\n   \tnpm test\n   ~~~\n   - Again\n4. Done\n\n"
+    markdown += "![remote](https://images.example.invalid/badge) ![local](doc.png)"
+    skill = write_skill(fake_home / ".agents/skills", "read", body=markdown)
+    (skill / "guide.md").write_text(markdown)
+    translation.configure("http://localhost:1234/v1", "fixture", None)
+    seen = []
+
+    def translate_batch(client, settings, texts):
+        seen.extend(texts)
+        return ["译文" for _ in texts]
+
+    monkeypatch.setattr(translation, "_translate_batch", translate_batch)
+    with TestClient(create_app()) as client:
+        key = client.get("/api/index").json()["items"][0]["identity_key"]
+        base = "/api/skill/" + key
+        headers = {"X-Skilldesk-Token": client.get("/api/session").json()["token"]}
+        bodies = [
+            client.get(base).json()["html"],
+            client.get(base + "/file", params={"rel": "guide.md"}).json()["html"],
+            client.post("/api/ai/translate", headers=headers, json={"identity_key": key}).json()["html"],
+        ]
+    for body in bodies:
+        assert '<ol class="md-list" start="3">' in body and '<ul class="md-list">' in body
+        assert f'<pre><code class="language-sh">{commands}</code></pre>' in body
+        assert 'data-remote-image="https://' in body and 'src="https://' not in body
+        assert '<img alt="local" src="doc.png">' in body
+    assert seen and not any("npm test" in s or "cd sample" in s for s in seen)
+    block = render("1. First paragraph\ncontinued here\n\n       leave\n       \ttabs\n2. Next")
+    assert "First paragraph continued here" in block and "<pre><code>leave\n\ttabs</code></pre>" in block

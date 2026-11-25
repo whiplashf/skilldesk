@@ -207,6 +207,12 @@ def scan(config: Config | None = None) -> ScanResult:
             by_real[key].placements.append(Placement(
                 str(root.path), root.kind, relative, str(path), key, path.is_symlink(),
             ))
+            origin = by_real[key].provenance
+            if (root.distribution and origin.confidence == "none" and real_dir == path
+                    and (root.distribution != "Codex 内置" or relative.startswith(".system/"))):
+                origin.confidence = "recorded"
+                origin.provider = root.distribution
+                origin.evidence = str(root.path / ".system" if root.distribution == "Codex 内置" else root.path)
 
     for path in [config_path(), codex_config(), *enabled_codex_packages(), *lockfile_paths()]:
         watch(path)

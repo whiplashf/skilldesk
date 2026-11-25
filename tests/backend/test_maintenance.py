@@ -77,6 +77,71 @@ def change(client, entry, action, key=KEY):
     return post(client, "placement-preview", action=action, entry=str(entry), identity_key=key)
 
 
+def test_current_and_metadata_only_updates_do_not_replace_files(remote, client, fake_home):
+    root = fake_home / ".agents/skills"
+    install(client, root)
+    path = root / "alpha"
+    lock = lock_path(root)
+    before = lock.read_bytes()
+    original = (path.stat().st_ino, (path / "SKILL.md").stat().st_ino)
+    current = good(change(client, path, "update"))
+    assert current["outcome"] == "current" and current["backup"] == ""
+    assert good(post(client, "confirm", id=current["id"]))["outcome"] == "current"
+    assert lock.read_bytes() == before
+    (remote / "other.txt").write_text("unrelated change")
+    next_commit = commit(remote)
+    plan = good(change(client, path, "update"))
+    assert plan["outcome"] == "record" and plan["backup"] == ""
+    receipt = good(post(client, "confirm", id=plan["id"]))
+    assert good(post(client, "confirm", id=plan["id"])) == receipt
+    assert read_json(lock, {})["skills"]["alpha"]["commit"] == next_commit
+    assert (path.stat().st_ino, (path / "SKILL.md").stat().st_ino) == original
+    assert not (maintenance.state_dir() / "backups").exists()
+
+
+def test_dangling_preview_requires_same_still_missing_direct_link(client, fake_home):
+    root = fake_home / ".claude/skills"
+    entry = root / "lost"
+    target = root.parent / "recovered"
+    entry.symlink_to("../recovered")
+    nested = root / "group"
+    nested.mkdir()
+    (nested / "broken").symlink_to("gone")
+    headers = {"X-Skilldesk-Token": client.get("/api/session").json()["token"]}
+    client.post("/api/scan", headers=headers).raise_for_status()
+    issues = client.get("/api/issues").json()
+    assert issues["total"] == issues["counts"]["dangling"] == 2
+    fixable, = [x for x in issues["items"] if x["fixable"]]
+    assert fixable["name"] == "lost" and fixable["missingTarget"] == "../recovered"
+    assert post(client, "dangling-preview", entry=str(nested / "broken")).status_code == 409
+    plan = good(post(client, "dangling-preview", entry=str(entry)))
+    assert plan["dangling"] and plan["linkTarget"] == "../recovered"
+    target.mkdir()
+    assert post(client, "confirm", id=plan["id"]).status_code == 409
+    assert entry.is_symlink() and target.is_dir()
+    entry.unlink()
+    entry.symlink_to("other-missing")
+    assert post(client, "confirm", id=plan["id"]).status_code == 409
+    plan = good(post(client, "dangling-preview", entry=str(entry)))
+    receipt = good(post(client, "confirm", id=plan["id"]))
+    assert good(post(client, "confirm", id=plan["id"])) == receipt and not entry.is_symlink()
+    assert (nested / "broken").is_symlink() and target.is_dir()
+
+
+def test_root_and_all_sibling_candidates_can_be_selected(remote, client, fake_home):
+    root = fake_home / ".agents/skills"
+    (remote / "SKILL.md").write_text("# Root skill")
+    for n in range(21):
+        write_skill(remote / "extras", "demo-" + str(n))
+    commit(remote)
+    choices = post(client, "install-preview", repository=REPO, root=str(root))
+    assert choices.status_code == 404 and len(choices.json()["candidates"]) == 24
+    for path in ["SKILL.md", "extras/demo-20/SKILL.md"]:
+        assert path in choices.json()["candidates"]
+        preview = good(post(client, "install-preview", repository=REPO, root=str(root), path=path))
+        assert preview["source"]["path"] == path
+
+
 def test_two_siblings_share_git_cache_and_replayed_confirmation(remote, client, fake_home):
     root = fake_home / ".agents/skills"
     p, result = install(client, root)

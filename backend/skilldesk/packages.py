@@ -26,6 +26,12 @@ class MaintenanceError(ValueError):
         self.status = status
 
 
+class SkillChoices(MaintenanceError):
+    def __init__(self, paths: list[str]):
+        super().__init__("请选择要安装的 skill，可用路径有 " + "、".join(paths[:20]), 404)
+        self.paths = paths
+
+
 def relative_path(value: str) -> str:
     parts = value.split("/")
     if (
@@ -262,16 +268,17 @@ def legacy_cli_hash(directory: Path, files: dict) -> str:
     return value.hexdigest()
 
 
-def materialize(source: Source, destination: Path, ref: str = "") -> tuple[Source, str, str]:
+def materialize(source: Source, destination: Path, ref: str = "", *, discover: bool = False) -> tuple[Source, str, str]:
     head = remote_head(source, ref)
     slot = object_store(source, head)
-    if git(["cat-file", "-e", head + ":" + source.path], slot, check=False).returncode:
+    if discover or git(["cat-file", "-e", head + ":" + source.path], slot, check=False).returncode:
         paths = _paths(slot, head)
-        if source.path == "SKILL.md" and len(paths) == 1:
+        if (discover or source.path == "SKILL.md") and len(paths) == 1:
             source = replace(source, path=relative_path(paths[0]))
+        elif paths:
+            raise SkillChoices(paths)
         else:
-            choices = "、".join(paths[:20])
-            raise MaintenanceError("没有找到该文档" + ("，可用路径有 " + choices if choices else ""), 404)
+            raise MaintenanceError("仓库中没有找到 SKILL.md", 404)
     folder = source.path.rpartition("/")[0]
     tree = head + ":" + folder if folder else head
     listing = git(["ls-tree", "-rlz", tree], slot).stdout

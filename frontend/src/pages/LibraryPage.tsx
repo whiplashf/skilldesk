@@ -3,6 +3,7 @@ import { api, PAGE_SIZE } from '../api/endpoints';
 import { ApiError, describeError } from '../api/client';
 import type { AssetChanges, SkillSummary } from '../api/types';
 import { FileOverlay } from '../components/FileOverlay';
+import { ActionNotice, type Notice } from '../components/ActionNotice';
 import { FacetGroups } from '../components/FilterRail';
 import { SkillList } from '../components/SkillList';
 import { LibraryNavigation, libraryViews } from '../components/LibraryNavigation';
@@ -38,7 +39,17 @@ export function LibraryPage({ selectedKey, onOpenSkill, generation, onScanned }:
   const [busy, setBusy] = useState(false);
   const [checkingPage, setCheckingPage] = useState(false);
   const pending = useRef(false);
-  const [message, setMessage] = useState('');
+  const [notice, setNotice] = useState<Notice>();
+  const setMessage = (text: string) => setNotice(text ? { text } : undefined);
+  const [narrow, setNarrow] = useState(() => window.matchMedia('(max-width: 860px)').matches);
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 860px)');
+    const changed = () => setNarrow(media.matches);
+    media.addEventListener('change', changed);
+    changed();
+    return () => media.removeEventListener('change', changed);
+  }, []);
+  const restore = useRef<{ key: string; scroll: number } | null>(null);
   const [files, setFiles] = useState<DocumentTarget[]>([]);
   const searchInput = useRef<HTMLInputElement>(null);
   const listColumn = useRef<HTMLDivElement>(null);
@@ -62,18 +73,25 @@ export function LibraryPage({ selectedKey, onOpenSkill, generation, onScanned }:
   const first = list.state.status === 'loading' ? lastPreview.current : items[0]?.identity_key ?? null;
   const preview = selectedKey ?? first;
   const hasAdvanced = Boolean(filters.host || filters.source || filters.confidence || filters.health);
-  const hasFilters = hasActiveFilters(filters) || Boolean(agent) || view !== 'all';
+  const hasFilters = hasActiveFilters(filters) || Boolean(agent);
   const file = files[files.length - 1];
   const refreshData = () => setEpoch(n => n + 1);
 
   useEffect(() => { sessionStorage.setItem('skilldesk.library-query', query); }, [query]);
   useEffect(() => { if (list.state.status === 'ready') lastPreview.current = list.state.data.items[0]?.identity_key ?? null; }, [list.state]);
   useEffect(() => {
-    if (!grouped && list.state.status === 'ready' && page && list.state.data.total <= page * PAGE_SIZE) {
+    if (!restore.current && !grouped && list.state.status === 'ready' && page && list.state.data.total <= page * PAGE_SIZE) {
       const last = Math.max(1, Math.ceil(list.state.data.total / PAGE_SIZE));
       updateLibraryParams({ page: last > 1 ? String(last) : '' });
     }
   }, [list.state, page, grouped]);
+  useEffect(() => {
+    const saved = restore.current;
+    if (saved && list.state.data?.items.some(i => i.identity_key === saved.key)) {
+      listColumn.current?.querySelector('.rows-scroll')?.scrollTo({ top: saved.scroll });
+      restore.current = null;
+    }
+  }, [list.state]);
   useEffect(() => { setFiles([]); detailPane.current?.scrollTo({ top: 0 }); }, [preview]);
   useEffect(() => registerSearchFocus(() => { searchInput.current?.focus(); searchInput.current?.select(); }), []);
 
@@ -90,18 +108,38 @@ export function LibraryPage({ selectedKey, onOpenSkill, generation, onScanned }:
     onOpenSkill(key, position);
   }
   function toggle(axis: FacetAxis, value: string) { change(axis, filters[axis] === value ? '' : value); }
-  function clear() { setMessage(''); updateLibraryParams({}, true); }
-  async function save(item: SkillSummary, changes: AssetChanges): Promise<boolean> {
+  function clear() { setMessage(''); updateLibraryParams({ q: '', host: '', source: '', confidence: '', health: '', agent: '', page: '' }); }
+  async function save(item: SkillSummary, changes: AssetChanges, reread = false): Promise<boolean> {
     if (pending.current) return false;
     pending.current = true; setBusy(true); setMessage('');
     try {
-      const updated = await api.patch(item, changes);
+      const current = reread ? await api.skill(item.identity_key) : item;
+      let updated: SkillSummary;
+      try { updated = await api.patch(current, changes); }
+      catch (err) {
+        if (!(err instanceof ApiError && err.status === 409 && changes.favorite !== undefined)) throw err;
+        const fresh = await api.skill(item.identity_key);
+        updated = fresh.favorite === changes.favorite ? fresh : await api.patch(fresh, changes);
+      }
+      if (changes.favorite === false) {
+        const location = window.location.hash;
+        const scroll = listColumn.current?.querySelector('.rows-scroll')?.scrollTop ?? 0;
+        setNotice({ text: '已取消收藏 ' + item.name, action: { label: '撤销', run: async () => {
+          if (await save(updated, { favorite: true }, true) && view === 'favorites') {
+            restore.current = { key: item.identity_key, scroll };
+            navigate(location);
+          }
+        } } });
+      } else setMessage((changes.favorite ? '已收藏 ' : '已保存来源 · ') + item.name);
       if ('mine' in changes || 'github' in changes) onScanned();
-      if (selectedKey === item.identity_key && ((view === 'favorites' && !updated.favorite) ||
-          (view === 'mine' && !updated.mine) || (view === 'github' && updated.mine))) navigate(libraryHref());
+      if (selectedKey === item.identity_key && ((view === 'mine' && !updated.mine) || (view === 'github' && updated.mine))) navigate(libraryHref());
       refreshData();
       return true;
-    } catch (error) { setMessage(describeError(error)); refreshData(); return false; }
+    } catch (error) {
+      setNotice({ text: item.name + ' · ' + describeError(error), error: true,
+        action: { label: '重试保存', run: () => void save(item, changes, true) } });
+      refreshData(); return false;
+    }
     finally { pending.current = false; setBusy(false); }
   }
   async function rescan() {
@@ -119,24 +157,15 @@ export function LibraryPage({ selectedKey, onOpenSkill, generation, onScanned }:
     const candidates = items.filter(item => item.upstream?.path);
     if (!candidates.length || checkingPage) return;
     setCheckingPage(true);
-    let completed = 0;
-    let failed = 0;
-    let errorMessage = '';
+    setMessage('正在检查本页 ' + candidates.length + ' 项的上游版本…');
     try {
-      for (const item of candidates) {
-        setMessage('正在检查 ' + item.name + ' · ' + (completed + failed + 1) + '/' + candidates.length);
-        try {
-          await api.checkVersion(item.identity_key);
-          completed++;
-        } catch (error) {
-          failed++;
-          errorMessage = describeError(error);
-          if (error instanceof ApiError && [0, 429, 502].includes(error.status)) break;
-        }
-      }
-      setMessage('已检查 ' + completed + ' 项' + (failed ? ' · ' + failed + ' 项失败 · ' + errorMessage : ''));
+      const result = await api.checkBatch(candidates.map(i => i.identity_key));
+      const errors = result.items.filter(i => i.error);
+      const skipped = candidates.length - result.items.length;
+      setMessage('已检查 ' + (result.items.length - errors.length) + ' 项' +
+        (errors.length ? ' · ' + errors.length + ' 项失败 · ' + errors[0]?.error : '') + (skipped ? ' · ' + skipped + ' 项待检查' : ''));
       refreshData();
-    } finally {
+    } catch (err) { setNotice({ text: describeError(err), error: true }); } finally {
       setCheckingPage(false);
     }
   }
@@ -144,18 +173,21 @@ export function LibraryPage({ selectedKey, onOpenSkill, generation, onScanned }:
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (document.querySelector('dialog[open]') || event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+      const inSearch = event.target === searchInput.current;
       if (event.key === 'Escape') {
         if (files.length) setFiles(current => current.slice(0, -1));
-        else if (advanced.current?.open) advanced.current.open = false;
-        else if (selectedKey) navigate(libraryHref(position));
-        else if (hasFilters) clear();
+        else if (inSearch && filters.q) change('q', '');
+        else if (isTypingTarget(event.target)) return;
+        else if (advanced.current?.open && advanced.current.contains(event.target as Node)) {
+          advanced.current.open = false; advanced.current.querySelector('summary')?.focus();
+        } else if (selectedKey && narrow) navigate(libraryHref(position));
         else return;
         event.preventDefault(); return;
       }
-      if (files.length) return;
-      const inSearch = event.target === searchInput.current;
+      if (files.length || (narrow && selectedKey)) return;
       if (isTypingTarget(event.target) && !inSearch) return;
       if (event.key === '/' && !inSearch) { event.preventDefault(); searchInput.current?.focus(); return; }
+      if (!inSearch && !(event.target instanceof Element && event.target.closest('button[data-row-index]'))) return;
       const rows = Array.from(listColumn.current?.querySelectorAll<HTMLButtonElement>('button[data-row-index]') ?? []);
       if (inSearch && event.key === 'Enter' && search === filters.q && items[0]) {
         event.preventDefault(); openSkill(items[0].identity_key); searchInput.current?.blur(); return;
@@ -197,8 +229,8 @@ export function LibraryPage({ selectedKey, onOpenSkill, generation, onScanned }:
             {hasFilters && <button type="button" className="button" onClick={clear}>清空筛选</button>}
           </div></details>
       </div>
-      {message && <p className="action-message" role="status">{message}</p>}
     </header>
+    {notice && <ActionNotice key={notice.text} note={notice} busy={busy} close={() => setNotice(undefined)} />}
     <div className="library-panes">
       <div className="list-column" ref={listColumn}>
         <SkillList view={view} state={list.state} page={displayedPage} pageSize={PAGE_SIZE} selectedKey={preview} busy={busy}
@@ -209,11 +241,11 @@ export function LibraryPage({ selectedKey, onOpenSkill, generation, onScanned }:
           onPageChange={n => updateLibraryParams({ page: n > 0 ? String(n + 1) : '', repo: activeGroup?.key || '' })}
           onClearFilters={clear} onRefresh={() => void rescan()} />
       </div>
-      <div className="detail-pane" ref={detailPane}>{preview && <SkillDetail key={preview} identityKey={preview}
+      <div className="detail-pane" ref={detailPane}>{preview && (!narrow || selectedKey) && <SkillDetail key={preview} identityKey={preview}
         generation={generation + '-' + epoch} backHref={libraryHref(position)} busy={busy}
         onSave={save} onFile={openFile} onVersion={refreshData} onMaintenance={result => {
           const label = result.action === 'update' ? '已升级' : result.action === 'unlink' ? '已解除链接' : '已卸载';
-          setMessage(label + ' · ' + result.target + (result.backup ? '。原副本保存在 ' + result.backup : ''));
+          setNotice({ text: (result.outcome === 'record' ? '已更新安装记录' : label) + ' · ' + result.target, backup: result.backup });
           if (result.action !== 'update') navigate(libraryHref(position));
           refreshData(); onScanned();
         }} />}</div>

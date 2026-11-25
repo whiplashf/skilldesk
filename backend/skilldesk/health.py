@@ -8,7 +8,9 @@ from __future__ import annotations
 import hashlib
 from collections import defaultdict
 from dataclasses import dataclass
+from pathlib import Path
 
+from .placements import dangling_target, link_roots
 from .scan import DanglingEntry, SkillRecord
 
 KINDS: dict[str, dict] = {
@@ -72,15 +74,14 @@ def detect(skills: list[SkillRecord], dangling: list[DanglingEntry]) -> list[Iss
     """All health issues for one scan, in a stable order."""
     issues: list[Issue] = []
 
+    roots = link_roots() if dangling else set()
     for entry in dangling:
-        issues.append(
-            _issue(
-                "dangling_link",
-                "",
-                entry.entry_path,
-                f"{entry.kind} 根里的 {entry.entry} 指向不存在的 {entry.target or '(未知目标)'}",
-            )
+        issue = _issue(
+            "dangling_link", "", entry.entry_path,
+            f"{entry.kind} 根里的 {entry.entry} 指向不存在的 {entry.target or '(未知目标)'}",
         )
+        issue.fixable = bool(dangling_target(Path(entry.entry_path), roots))
+        issues.append(issue)
 
     for skill in skills:
         if skill.provenance.confidence == "none":

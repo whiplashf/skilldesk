@@ -21,7 +21,7 @@ import httpx
 from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from . import __version__, library, maintenance, placements, translation, upstream
 from . import index as index_mod
@@ -30,7 +30,7 @@ from .health import KINDS as HEALTH_KINDS
 from .health import detect
 from .identity import CONFIDENCE_LABEL
 from .markdown import render, split_frontmatter
-from .packages import MaintenanceError
+from .packages import MaintenanceError, SkillChoices
 from .scan import MAX_SKILL_BYTES, input_stamp, read_body, scan
 
 RESCAN_THROTTLE_SECONDS = 3.0
@@ -87,7 +87,7 @@ class InstallPreview(BaseModel):
     model_config = ConfigDict(extra="forbid")
     root: str
     repository: str
-    path: str = "SKILL.md"
+    path: str = ""
 
 
 class PlacementPreview(BaseModel):
@@ -107,6 +107,14 @@ class Confirmation(BaseModel):
 class SkillAction(BaseModel):
     identity_key: str
     force: bool = False
+
+
+class BatchCheck(BaseModel):
+    keys: list[str] = Field(min_length=1, max_length=50)
+
+
+class DanglingPreview(BaseModel):
+    entry: str
 
 
 FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
@@ -309,13 +317,17 @@ def create_app(
         library.apply_claim(item, library.claim_of(asset))
         item.update(repository=index_mod.repository_for(item["provenance"], asset),
                     favorite=bool(asset.get("favorite")), mine=bool(asset.get("mine")), upstream=source,
+                    hasTrackingOverride=bool(asset.get("github")),
                     versionStatus=upstream.previous(item, source), libraryRevision=annotations["revision"])
         item["confidenceLabel"] = CONFIDENCE_LABEL.get(item["provenance"]["confidence"], "")
         return item
 
     @app.exception_handler(MaintenanceError)
     async def operation_error(_request: Request, error: MaintenanceError):
-        return JSONResponse({"detail": str(error)}, status_code=error.status)
+        body = {"detail": str(error)}
+        if isinstance(error, SkillChoices):
+            body["candidates"] = error.paths
+        return JSONResponse(body, status_code=error.status)
 
     def run_operation(fn, *args, **kwargs):
         try:
@@ -343,11 +355,24 @@ def create_app(
     def placement_preview(action: PlacementPreview):
         return run_operation(maintenance.preview, action.action, item=fresh_item(action.identity_key), entry=action.entry)
 
+    @app.post("/api/maintenance/dangling-preview")
+    def dangling_preview(action: DanglingPreview):
+        conn = with_conn()
+        try:
+            row = conn.execute("SELECT fixable FROM health_issue WHERE kind='dangling_link' AND target=?",
+                               (action.entry,)).fetchone()
+            if not row or not row[0]:
+                raise HTTPException(409, "该入口无法从安装健康中解除，请刷新查看当前位置")
+        finally:
+            conn.close()
+        return run_operation(maintenance.preview, "unlink", entry=action.entry, dangling=True)
+
     @app.post("/api/maintenance/confirm")
     def confirm(action: Confirmation):
         result = run_operation(maintenance.apply, action.id, fresh_item,
                                accept_license=action.accept_license, accept_local=action.accept_local)
-        refresh_if_stale(database, force=True)
+        if result.get("outcome") != "current":
+            refresh_if_stale(database, force=True)
         return result
 
     @app.get("/api/library")
@@ -430,14 +455,13 @@ def create_app(
     def upstream_quota() -> dict:
         return upstream.quota()
 
-    @app.post("/api/check")
-    def check_upstream(action: SkillAction):
+    def check_one(action: SkillAction, batch=None):
         item, annotations = get_installed(action.identity_key)
         source = upstream.source_for(item, annotations["assets"].get(action.identity_key, {}))
         if not source or not source["path"]:
             raise HTTPException(400, "请先在来源中确认 GitHub 仓库与 SKILL.md 路径")
         try:
-            return upstream.check(item, source, action.force)
+            return upstream.check(item, source, action.force, batch=batch)
         except ValueError as error:
             raise HTTPException(400, str(error))
         except upstream.QuotaExhausted as error:
@@ -455,6 +479,23 @@ def create_app(
             raise HTTPException(502, "GitHub 未能返回版本信息，请核对仓库访问权限") from error
         except (httpx.HTTPError, OSError) as error:
             raise HTTPException(502, "检查失败，请稍后重试或检查 GitHub 访问权限及配额") from error
+
+    @app.post("/api/check")
+    def check_upstream(action: SkillAction):
+        return check_one(action)
+
+    @app.post("/api/check-batch")
+    def check_batch(action: BatchCheck):
+        memo, results = {}, []
+        for key in dict.fromkeys(action.keys):
+            try:
+                result = check_one(SkillAction(identity_key=key, force=True), memo)
+                results.append({"key": key, "result": result})
+            except HTTPException as error:
+                results.append({"key": key, "error": error.detail})
+                if error.status_code == 429:
+                    break
+        return {"items": results}
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
@@ -506,6 +547,8 @@ def create_app(
             )
             for item in result["items"]:
                 decorate(item, annotations)
+            if view == "favorites" and not result["items"]:
+                result["hasFavorites"] = index_mod.has_installed_favorites(conn, annotations["assets"])
             return result
         finally:
             conn.close()
@@ -536,16 +579,19 @@ def create_app(
         limit: int = Query(500, ge=1, le=2000),
         offset: int = Query(0, ge=0),
     ) -> dict[str, Any]:
+        refresh_if_stale(database)
         conn = with_conn()
         try:
+            conn.execute("BEGIN")
             claimed = claims_for(conn)
+            counts = index_mod.counts(conn, claimed)
             items = index_mod.list_issues(
                 conn, kind=kind, identity_key=identity_key, claimed=claimed, limit=limit, offset=offset
             )
             total = index_mod.issue_total(conn, kind=kind, identity_key=identity_key, claimed=claimed)
         finally:
             conn.close()
-        return {"items": items, "total": total, "limit": limit, "offset": offset, "kinds": HEALTH_KINDS}
+        return {"items": items, "total": total, "limit": limit, "offset": offset, "kinds": HEALTH_KINDS, "counts": counts}
 
     @app.get("/api/skill/{key:path}/file")
     def api_file(key: str, rel: str = Query(..., min_length=1), raw: bool = False) -> dict[str, Any]:
@@ -623,6 +669,7 @@ def create_app(
         skill["html"] = render(markdown_body)
         for placement in skill["placements"]:
             placement["actions"], placement["managementNote"] = placements.inspect(skill, placement)
+            placement["installedSource"] = placements.installed_source(Path(placement["realpath"]))
         return decorate(skill, annotations)
 
     if FRONTEND_DIST.is_dir():

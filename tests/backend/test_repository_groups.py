@@ -132,14 +132,16 @@ def test_local_copies_and_unpublished_files_share_their_checkout_repository(fake
         result = client.get("/api/index", params={"by_repository": True}).json()
         assert [(g["key"], g["count"]) for g in result["repositories"]] == [
             ("github.com/example/my-tools", 3),
-            ("unassigned", 1),
+            ("provider:example.org", 1),
         ]
         assert {item["name"] for item in result["items"]} == {"published", "draft", "copied-draft"}
         for item in result["items"]:
             assert item["repository"]["key"] == result["activeRepository"]
             assert item["provenance"]["localRoot"] == str(checkout)
             assert bool(item["upstream"]) == (item["name"] == "published")
-        unassigned = client.get(
-            "/api/index", params={"by_repository": True, "repository": "unassigned"}
+        provided = client.get(
+            "/api/index", params={"by_repository": True, "repository": "provider:example.org"}
         ).json()
-        assert unassigned["items"][0]["repository"]["name"] == "未关联仓库"
+        assert provided["items"][0]["repository"] == {
+            "key": "provider:example.org", "name": "example.org", "location": "提供方",
+        }

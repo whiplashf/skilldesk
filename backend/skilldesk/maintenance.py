@@ -20,6 +20,7 @@ from .config import state_dir
 from .library import read_json, write_json
 from .packages import SCRIPT_EXTENSIONS, MaintenanceError, Source
 from .placements import (
+    dangling_target,
     dependencies,
     install_name,
     lock_data,
@@ -119,9 +120,10 @@ def preview(
     *,
     root: str = "",
     repository: str = "",
-    path: str = "SKILL.md",
+    path: str = "",
     item: dict | None = None,
     entry: str = "",
+    dangling: bool = False,
 ) -> dict:
     with writing():
         expire_plans()
@@ -131,8 +133,12 @@ def preview(
             if action == "install":
                 if Path(root) not in stores():
                     raise MaintenanceError("请选择已配置的全局或项目安装目录")
-                source = Source.parse(repository, path)
+                source = Source.parse(repository, path or "SKILL.md")
                 target = None
+            elif action == "unlink" and dangling:
+                target = Path(entry)
+                if not dangling_target(target):
+                    raise MaintenanceError("此入口不符合解除条件或已经恢复，请刷新安装健康", 409)
             else:
                 if not item or action not in {"update", "uninstall", "unlink"}:
                     raise MaintenanceError("请选择本机库中的具体安装位置")
@@ -147,7 +153,14 @@ def preview(
                 if before is not None:
                     source = source_of(before["record"])
                     ref = str(before["record"].get("ref") or "")
-                resolved, commit, license_name = packages.materialize(source, slot / "package", ref)
+                try:
+                    resolved, commit, license_name = packages.materialize(
+                        source, slot / "package", ref, discover=action == "install" and not path
+                    )
+                except packages.SkillChoices as error:
+                    if action == "update":
+                        raise MaintenanceError("原安装路径已从仓库移除，请核实上游目录", 409) from error
+                    raise
                 if action == "update" and resolved.coordinates() != source.coordinates():
                     raise MaintenanceError("原安装路径已从仓库移除，请核实上游目录", 409)
                 coordinate = resolved.json()
@@ -168,7 +181,8 @@ def preview(
                 "expiresAt": int(time.time()) + PLAN_TTL,
                 "localState": drift(target, before) if action in {"update", "uninstall"} else "clean",
                 "links": dependencies(item, target) if item and action != "unlink" else [],
-                "linkTarget": str(target.resolve()) if action == "unlink" else "",
+                "linkTarget": (os.readlink(target) if dangling else str(target.resolve())) if action == "unlink" else "",
+                "dangling": dangling,
                 "changes": changed_files(before["files"], after),
                 "files": len([v for v in after.values() if v[0] != "dir"]),
                 "bytes": sum(v[2] for v in after.values()),
@@ -180,18 +194,21 @@ def preview(
                 ),
             }
             anchor = next(parent for parent in target.parents if parent.is_dir())
-            write_json(
-                slot / "plan.json",
-                {
-                    "anchor": [str(anchor), token(anchor)],
-                    "report": report,
-                    "key": item["identity_key"] if item else "",
-                    "before": before,
-                    "after": after,
-                    "tree": new_tree,
-                    "cliHash": cli_digest,
-                },
-            )
+            plan = {
+                "anchor": [str(anchor), token(anchor)], "report": report,
+                "key": item["identity_key"] if item else "", "before": before,
+                "after": after, "tree": new_tree, "cliHash": cli_digest,
+            }
+            if action == "update" and report["localState"] == "clean" and before["files"] == after:
+                candidate = record_after(plan)
+                candidate["updatedAt"] = before["record"].get("updatedAt")
+                report["backup"] = ""
+                if candidate == before["record"]:
+                    report["outcome"] = "current"
+                    shutil.rmtree(slot / "package")
+                else:
+                    report["outcome"] = "record"
+            write_json(slot / "plan.json", plan)
             return report
         except BaseException:
             shutil.rmtree(slot)
@@ -222,7 +239,9 @@ def record_after(plan: dict) -> dict | None:
         record["computedHash"] = (
             plan["cliHash"]
             if lock_data(lock).get("version") == 2
-            else packages.legacy_cli_hash(plans() / r["id"] / "package", plan["after"])
+            else packages.legacy_cli_hash(
+                Path(r["target"]) if r.get("outcome") == "record" else plans() / r["id"] / "package", plan["after"]
+            )
         )
     else:
         record["skillFolderHash"] = plan["tree"] if source["host"] == "github.com" else plan["cliHash"]
@@ -253,8 +272,11 @@ def verify(plan: dict, get_item):
     anchor, inode = plan["anchor"]
     if not plain(Path(anchor)) or not Path(anchor).is_dir() or token(Path(anchor)) != inode:
         raise MaintenanceError(STALE, 409)
-    if action == "install":
+    if action == "install" or report.get("outcome") == "current":
         if target.parent not in stores():
+            raise MaintenanceError(STALE, 409)
+    elif report.get("dangling"):
+        if not dangling_target(target) or os.readlink(target) != plan["before"]["link"]:
             raise MaintenanceError(STALE, 409)
     else:
         item = get_item(plan["key"])
@@ -335,7 +357,11 @@ def apply(plan_id: str, get_item, *, accept_license: bool = False, accept_local:
             raise MaintenanceError("预览已过期，请重新预览", 410)
         r = plan["report"]
         action = r["action"]
-        incoming = action in {"install", "update"}
+        if r.get("outcome") == "current":
+            verify(plan, get_item)
+            return {"action": action, "target": r["target"], "backup": "", "outcome": "current"}
+        record_only = r.get("outcome") == "record"
+        incoming = action in {"install", "update"} and not record_only
         if incoming and not r["license"] and not accept_license:
             raise MaintenanceError("请确认已了解上游没有声明许可证")
         if r["localState"] != "clean" and not accept_local:
@@ -350,6 +376,8 @@ def apply(plan_id: str, get_item, *, accept_license: bool = False, accept_local:
         backup = Path(r["backup"]) if r["backup"] else None
         previous = txn / "previous"
         result = {"action": action, "target": str(target), "backup": r["backup"]}
+        if record_only:
+            result["outcome"] = "record"
         journal = {"id": plan_id, "txn": str(txn), "previous": str(previous), "staging": True}
         try:
             write_json(plans() / "active.json", journal)
@@ -362,16 +390,17 @@ def apply(plan_id: str, get_item, *, accept_license: bool = False, accept_local:
                     raise MaintenanceError("备份位置已变化，请检查本机目录", 409)
                 backup.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             verify(plan, get_item)
-            record = record_after(plan)
+            record = plan["before"]["record"] if r.get("dangling") else record_after(plan)
             journal.update(staging=False, incoming=token(stage) if incoming else [], record=record)
             write_json(plans() / "active.json", journal)
-            if action != "install":
+            if action != "install" and not record_only:
                 os.replace(target, previous)
-                if (
-                    token(previous) != plan["before"]["inode"]
-                    or action != "unlink"
-                    and manifest(previous) != plan["before"]["files"]
-                ):
+                if token(previous) != plan["before"]["inode"]:
+                    raise MaintenanceError(STALE, 409)
+                if r.get("dangling") and (os.readlink(previous) != plan["before"]["link"]
+                                          or (target.parent / r["linkTarget"]).exists()):
+                    raise MaintenanceError(STALE, 409)
+                if action != "unlink" and manifest(previous) != plan["before"]["files"]:
                     raise MaintenanceError(STALE, 409)
             if incoming:
                 if exists(target):

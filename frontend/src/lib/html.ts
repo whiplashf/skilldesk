@@ -16,15 +16,29 @@ function relativeTarget(value: string, file: string): { path: string; anchor: st
 }
 
 export function resolveAssetSources(html: string, key: string, file = 'SKILL.md'): string {
-  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const template = document.createElement('template');
+  template.innerHTML = html;
   const base = '/api/skill/' + encodeURIComponent(key);
-  for (const node of doc.querySelectorAll('a[href],img[src]')) {
+  for (const node of template.content.querySelectorAll('a[href],img[src]')) {
     const image = node.tagName === 'IMG';
     const attr = image ? 'src' : 'href';
     const value = node.getAttribute(attr) || '';
     try {
       const target = relativeTarget(value, file);
-      if (!target) continue;
+      if (!target) {
+        if (image) {
+          const button = document.createElement('button');
+          button.type = 'button';
+          const alt = node.getAttribute('alt') || '';
+          button.textContent = '加载外部图片' + (alt ? ' · ' + alt : '');
+          if (/^https?:\/\//i.test(value)) {
+            button.dataset.remoteImage = value;
+            button.dataset.alt = alt;
+            node.replaceWith(button);
+          } else node.replaceWith(alt);
+        }
+        continue;
+      }
       node.setAttribute(attr, withQuery(base + (image ? '/asset' : '/file'), { rel: target.path }));
       if (!image) {
         node.removeAttribute('target');
@@ -33,5 +47,5 @@ export function resolveAssetSources(html: string, key: string, file = 'SKILL.md'
       }
     } catch { node.removeAttribute(attr); }
   }
-  return doc.body.innerHTML;
+  return template.innerHTML;
 }

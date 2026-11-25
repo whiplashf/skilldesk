@@ -154,6 +154,7 @@ def source_for(item: dict, asset: dict) -> dict | None:
             "ref": prov["ref"] if same else "",
             "tree": prov.get("tree", "") if same else "",
             "installedAt": installed_at if same else "",
+            **({"trackingOnly": True} if not same and prov["host"] and prov["repo"] else {}),
         }
     if prov["host"] == "github.com" and prov["repo"]:
         return {
@@ -258,6 +259,8 @@ def repo_view(repo: str, get, *, fresh: bool = False) -> dict:
     branch = repository.get("default_branch") or "main"
     head = get("commits/" + quote(branch, safe=""), {}) or {}
     head_ref = str(head.get("sha") or "")
+    if not head_ref:
+        raise ValueError("GitHub 未返回当前提交，请稍后重试")
     trees: dict[str, str] = {}
     blobs: set[str] = set()
     truncated = False
@@ -279,6 +282,7 @@ def repo_view(repo: str, get, *, fresh: bool = False) -> dict:
         "repo": repo,
         "branch": branch,
         "head": head_ref,
+        "checkedAt": int(time.time()),
         "headDate": str(((head.get("commit") or {}).get("committer") or {}).get("date") or ""),
         "rootTree": root_tree,
         "trees": trees,
@@ -293,7 +297,9 @@ def repo_view(repo: str, get, *, fresh: bool = False) -> dict:
 def _tree_at(repo: str, ref: str, get) -> dict | None:
     """Folder tree map at an arbitrary ref (used for a pinned install commit)."""
     key = (repo.lower(), ref)
-    cached = _REF_CACHE.get(key)
+    # Only object IDs are immutable. A release tag can be moved.
+    immutable = bool(re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", ref))
+    cached = _REF_CACHE.get(key) if immutable else None
     if cached and time.time() - cached[0] < TTL:
         return cached[1]
     payload = _optional(get, "git/trees/" + ref, {"recursive": "1"})
@@ -305,7 +311,8 @@ def _tree_at(repo: str, ref: str, get) -> dict | None:
         if entry.get("type") == "tree" and entry.get("path")
     }
     trees[""] = str(payload.get("sha") or "")
-    _REF_CACHE[key] = (time.time(), trees)
+    if immutable:
+        _REF_CACHE[key] = (time.time(), trees)
     return trees
 
 
@@ -364,7 +371,7 @@ def _scoped_release(item: dict, directory: PurePosixPath, releases: list) -> tup
             ),
             "",
         )
-        if prefix or root:
+        if prefix or (root and _version(tag)):
             return release, tag[len(prefix) :]
     return None
 
@@ -386,14 +393,15 @@ def _release_verdict(
     if scoped:
         release, tag_version = scoped
         tag = str(release.get("tag_name") or "")
-        result.update(latest=tag, url=release.get("html_url", ""))
         if _version(tag_version) and _version(local_version):
             if _version(tag_version) > _version(local_version):
+                result.update(latest=tag, url=release.get("html_url", ""))
                 return {**result, "status": "release", "detail": "这个 skill 已发布较新的正式版本"}
             if _version(tag_version) == _version(local_version) and not installed_tree:
+                result.update(latest=tag, url=release.get("html_url", ""))
                 return {**result, "status": "current", "detail": "本地声明的版本与最近一次正式发布一致"}
-        return None
-    generic = next(
+            return None
+    candidate = release if scoped else next(
         (
             release
             for release in releases
@@ -401,27 +409,30 @@ def _release_verdict(
         ),
         None,
     )
-    if not generic or not installed_tree or not source.get("ref"):
+    if not candidate or not installed_tree or not source.get("ref"):
         return None
-    tag = str(generic.get("tag_name") or "")
+    tag = str(candidate.get("tag_name") or "")
     released_tree = _dir_sha_at(tag, dir_path, get, view)
     if not released_tree or released_tree == installed_tree:
         return None
     comparison = get("compare/" + quote(source["ref"], safe="") + "..." + quote(tag, safe=""), {})
     if comparison and comparison.get("status") == "ahead":
-        result.update(latest=tag, url=generic.get("html_url", ""))
+        result.update(latest=tag, url=candidate.get("html_url", ""))
         return {**result, "status": "release", "detail": "发布包含此 skill 目录在安装基线之后的改动"}
     return None
 
 
-def evaluate(item: dict, source: dict, get, *, fresh: bool = False) -> dict:
+def evaluate(item: dict, source: dict, get, *, fresh: bool = False, snapshot: dict | None = None) -> dict:
     """get(endpoint, params) reads this installed repository; a 404 yields None."""
     directory = PurePosixPath(source["path"]).parent
     dir_path = "" if directory == PurePosixPath(".") else directory.as_posix()
-    view = repo_view(source["repo"], get, fresh=fresh)
-    local_version = installed_version(item)
+    snapshot = {} if snapshot is None else snapshot
+    if "view" not in snapshot:
+        snapshot["view"] = repo_view(source["repo"], get, fresh=fresh)
+    view = snapshot["view"]
+    local_version = "" if source.get("trackingOnly") else installed_version(item)
     result = {
-        "checkedAt": int(time.time()),
+        "checkedAt": view["checkedAt"],
         "installed": local_version or source.get("ref", "")[:9],
         "latest": "",
         "url": "",
@@ -476,7 +487,9 @@ def evaluate(item: dict, source: dict, get, *, fresh: bool = False) -> dict:
     if not installed_tree and local_tree == current:
         return settle("current", "本地目录与上游当前目录一致")
 
-    releases = _releases(source["repo"], get, fresh=fresh)
+    if "releases" not in snapshot:
+        snapshot["releases"] = _releases(source["repo"], get, fresh=fresh)
+    releases = snapshot["releases"]
     verdict = _release_verdict(
         item, directory, dir_path, releases, local_version, installed_tree, source, get, view, result
     )
@@ -512,14 +525,15 @@ def _preflight(client) -> None:
         raise QuotaExhausted(reset)
 
 
-def check(item: dict, source: dict, force: bool = False) -> dict:
+def check(item: dict, source: dict, force: bool = False, *, batch: dict | None = None) -> dict:
     coordinates(source["repo"], source["path"])
     saved = previous(item, source)
     if saved and not force and time.time() - saved["checkedAt"] < TTL:
         return saved
     headers = github_headers()
     base = "https://api.github.com/repos/" + source["repo"]
-    memo: dict = {}
+    snapshot = {} if batch is None else batch.setdefault(source["repo"].lower(), {})
+    memo = snapshot.setdefault("responses", {})
     with http_client(headers=headers, timeout=20, url_hint=base) as client:
         _preflight(client)
 
@@ -534,9 +548,7 @@ def check(item: dict, source: dict, force: bool = False) -> dict:
                     memo[key] = response.json()
             return memo[key]
 
-        # Only the per-skill result cache is bypassed here: the repository view
-        # stays cached so checking a page of 50 skills costs a few requests.
-        result = evaluate(item, source, get)
+        result = evaluate(item, source, get, fresh=force, snapshot=snapshot)
     write_json(_cache_path(item, source), result)
     return result
 

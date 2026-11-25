@@ -7,6 +7,8 @@ export type IssueKind = 'dangling_link' | 'unclaimed_source' | 'duplicate_conten
 export type SupportFileKind = 'markdown' | 'text' | 'image' | 'binary';
 
 export interface Provenance {
+  provider: string;
+  sourceLabel: string;
   host: string;
   repo: string;
   path: string;
@@ -47,6 +49,7 @@ export interface SkillSummary {
   access: { agent: string; scope: string }[];
   favorite: boolean;
   mine: boolean;
+  hasTrackingOverride: boolean;
   upstream: (GitHubSource & { ref: string }) | null;
   versionStatus: VersionStatus | null;
   libraryRevision: number;
@@ -71,6 +74,8 @@ export type PlacementAction = 'update' | 'uninstall' | 'unlink';
 export type MaintenanceAction = 'install' | PlacementAction;
 
 export interface MaintenancePreview {
+  outcome?: 'current' | 'record';
+  dangling?: boolean;
   id: string;
   action: MaintenanceAction;
   target: string;
@@ -88,9 +93,10 @@ export interface MaintenancePreview {
   scripts: string[];
 }
 
-export interface MaintenanceResult { action: MaintenanceAction; target: string; backup: string }
+export interface MaintenanceResult { action: MaintenanceAction; target: string; backup: string; outcome?: 'record' }
 
 export interface Placement {
+  installedSource: MaintenancePreview['source'];
   actions: PlacementAction[];
   managementNote: string;
   host_root: string;
@@ -102,6 +108,10 @@ export interface Placement {
 }
 
 export interface Issue {
+  name: string;
+  location: string;
+  missingTarget?: string;
+  agents: string[];
   id: string;
   kind: IssueKind;
   /** Empty for issues that are not attached to a skill (dangling links). */
@@ -167,6 +177,7 @@ export interface RepositoryGroup extends Repository {
 }
 
 export interface IndexResponse {
+  hasFavorites?: boolean;
   items: SkillSummary[];
   total: number;
   limit: number;
@@ -213,6 +224,8 @@ export interface IssueKindMeta {
 }
 
 export interface IssuesResponse {
+  counts: HealthCounts;
+  total: number;
   items: Issue[];
   kinds: Partial<Record<IssueKind, IssueKindMeta>>;
 }

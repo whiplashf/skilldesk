@@ -14,6 +14,7 @@ import { PageHeader } from '../components/PageHeader';
 import { TableSkeleton } from '../components/Skeleton';
 
 export interface SettingsPageProps {
+  section: string;
   health: AsyncState<Health>;
   onRetryHealth: () => void;
 }
@@ -164,7 +165,7 @@ function UpstreamQuotaBlock() {
   );
 }
 
-export function SettingsPage({ health, onRetryHealth }: SettingsPageProps) {
+export function SettingsPage({ health, onRetryHealth, section }: SettingsPageProps) {
   const roots = useApi<RootsResponse>((signal) => api.roots(signal), []);
   const [showQuota, setShowQuota] = useState(false);
   const [projectGeneration, setProjectGeneration] = useState(0);
@@ -173,8 +174,8 @@ export function SettingsPage({ health, onRetryHealth }: SettingsPageProps) {
     <div className="page">
       <PageHeader title="设置" sub="管理本机扫描范围和阅读时使用的翻译服务。" />
 
-      <ProjectSettings onChange={() => { setProjectGeneration(n => n + 1); roots.reload(); onRetryHealth(); }} />
-      <RepositoryInstall generation={projectGeneration} onChange={() => { roots.reload(); onRetryHealth(); }} />
+      <ProjectSettings key={'projects-' + section} focus={section === 'projects'} onChange={() => { setProjectGeneration(n => n + 1); roots.reload(); onRetryHealth(); }} />
+      <RepositoryInstall key={'install-' + section} startOpen={section === 'install'} generation={projectGeneration} onChange={() => { roots.reload(); onRetryHealth(); }} />
       <TranslationSettings />
       <section className="block">
         <h2 className="block-title">宿主根</h2>

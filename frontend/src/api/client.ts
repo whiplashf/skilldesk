@@ -1,7 +1,7 @@
 export class ApiError extends Error {
   readonly status: number;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, readonly candidates: string[] = []) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
@@ -43,27 +43,26 @@ export function withQuery(path: string, params: Record<string, QueryValue>): str
   return query ? `${path}?${query}` : path;
 }
 
-async function readFailureReason(response: Response): Promise<string | null> {
+async function readFailure(response: Response): Promise<ApiError> {
   try {
     const body: unknown = await response.json();
     if (typeof body !== 'object' || body === null) {
-      return null;
+      throw new Error();
     }
     const record = body as Record<string, unknown>;
     if (typeof record.detail === 'string' && record.detail !== '') {
-      return record.detail;
+      const paths = Array.isArray(record.candidates) ? record.candidates.filter((p): p is string => typeof p === 'string') : [];
+      return new ApiError(response.status, record.detail, paths);
     }
     const error = record.error;
     if (typeof error === 'object' && error !== null) {
       const message = (error as Record<string, unknown>).message;
       if (typeof message === 'string' && message !== '') {
-        return message;
+        return new ApiError(response.status, message);
       }
     }
-  } catch {
-    return null;
-  }
-  return null;
+  } catch { /* A proxy may return a non-JSON response. */ }
+  return new ApiError(response.status, `请求失败（HTTP ${response.status}）`);
 }
 
 /**
@@ -86,8 +85,7 @@ export async function getJson<T>(path: string, signal?: AbortSignal, options?: R
   }
 
   if (!response.ok) {
-    const reason = await readFailureReason(response);
-    throw new ApiError(response.status, reason ?? `请求失败（HTTP ${response.status}）`);
+    throw await readFailure(response);
   }
 
   return (await response.json()) as T;

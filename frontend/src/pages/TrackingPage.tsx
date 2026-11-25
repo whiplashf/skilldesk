@@ -1,154 +1,102 @@
-import type { Health, IssuesResponse } from '../api/types';
+import { useState } from 'react';
+import type { AssetChanges, Issue, MaintenancePreview as Plan, SkillSummary } from '../api/types';
 import { api } from '../api/endpoints';
-import { formatCount } from '../lib/format';
-import { ISSUE_KIND_ORDER, severityLabel, severityTone } from '../lib/labels';
-import type { AsyncState } from '../lib/useApi';
+import { describeError } from '../api/client';
+import { hostKindLabel, ISSUE_KIND_ORDER, severityLabel, severityTone } from '../lib/labels';
 import { useApi } from '../lib/useApi';
 import { Badge } from '../components/Badge';
 import { ErrorState } from '../components/ErrorState';
 import { PageHeader } from '../components/PageHeader';
-import { Skeleton } from '../components/Skeleton';
+import { OriginEditor } from '../components/OriginEditor';
+import { MaintenancePreview } from '../components/MaintenancePreview';
 
-export interface TrackingPageProps {
-  health: AsyncState<Health>;
-  onRetryHealth: () => void;
-  onOpenSkill: (identityKey: string) => void;
+function ClaimSource({ issue, onSaved }: { issue: Issue; onSaved: () => void }) {
+  const item = useApi(signal => api.skill(issue.identity_key, signal), [issue.identity_key], true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  async function save(skill: SkillSummary, changes: AssetChanges) {
+    setBusy(true); setError('');
+    try { await api.patch(skill, changes); onSaved(); return true; }
+    catch (err) { setError(describeError(err)); item.reload(); return false; }
+    finally { setBusy(false); }
+  }
+  return <div className="issue-claim">
+    {item.state.status === 'ready' ? <OriginEditor data={item.state.data} save={save} busy={busy} />
+      : item.state.status === 'error' ? <ErrorState message={item.state.error} onRetry={item.reload} /> : <p role="status">正在读取来源…</p>}
+    {error && <p role="alert">{error}</p>}
+  </div>;
 }
 
-interface StatProps {
-  value: number | null;
-  label: string;
-}
-
-function Stat({ value, label }: StatProps) {
-  return (
-    <div className="stat">
-      {value === null ? <Skeleton width="48px" height={22} /> : <span className="stat-value mono">{formatCount(value)}</span>}
-      <span className="stat-label">{label}</span>
-    </div>
-  );
-}
-
-export function TrackingPage({ health, onRetryHealth, onOpenSkill }: TrackingPageProps) {
-  const issues = useApi<IssuesResponse>((signal) => api.issues(signal), []);
-  const counts = health.status === 'ready' ? health.data.counts : null;
-
-  const issueItems = issues.state.status === 'ready' ? issues.state.data.items : [];
-  const kindMeta = issues.state.status === 'ready' ? issues.state.data.kinds : {};
-  const truncated = counts !== null && issues.state.status === 'ready' && counts.issues > issueItems.length;
-
-  const refresh = () => {
-    issues.reload();
-    onRetryHealth();
-  };
-
-  return (
-    <div className="page">
-      <PageHeader
-        title="跟踪 · 安装健康"
-        sub="查看本机的悬空软链、待确认来源和重复实体。GitHub 版本可在技能详情中检查。"
-        aside={
-          <button type="button" className="button button--ghost" onClick={refresh}>
-            刷新
-          </button>
-        }
-      />
-
-      {health.status === 'error' ? (
-        <ErrorState title="索引状态加载失败" message={health.error} onRetry={onRetryHealth} />
-      ) : (
-        <>
-          <section className="stats" aria-label="索引统计">
-            <Stat value={counts?.skills ?? null} label="skill 实体" />
-            <Stat value={counts?.placements ?? null} label="落点" />
-            <Stat value={counts?.issues ?? null} label="待处理问题" />
-          </section>
-          {counts === null ? null : (
-            <p className="page-note mono">
-              悬空软链 {formatCount(counts.dangling)} · 待认领 {formatCount(counts.unclaimed)} · 宿主根{' '}
-              {formatCount(counts.roots)}
-            </p>
-          )}
-        </>
-      )}
-
-      {issues.state.status === 'loading' ? (
-        <div className="issue-groups" aria-hidden="true">
-          <Skeleton width="180px" height={13} />
-          <Skeleton width="320px" height={10} />
-          <Skeleton width="260px" height={10} />
-        </div>
-      ) : null}
-
-      {issues.state.status === 'error' ? (
-        <ErrorState title="问题清单加载失败" message={issues.state.error} onRetry={issues.reload} />
-      ) : null}
-
-      {issues.state.status === 'ready' ? (
-        <div className="issue-groups">
-          {ISSUE_KIND_ORDER.map((kind) => {
-            const meta = kindMeta[kind];
-            const rows = issueItems.filter((item) => item.kind === kind);
-            const label = meta?.label ?? kind;
-            return (
-              <section className="issue-group" key={kind} aria-label={label}>
-                <header className="issue-group-head">
-                  <h2 className="issue-group-title">{label}</h2>
-                  {meta === undefined ? null : (
-                    <Badge tone={severityTone(meta.severity)}>{severityLabel(meta.severity)}</Badge>
-                  )}
-                  <span className="issue-group-count mono">{formatCount(rows.length)}</span>
-                  {meta === undefined ? null : <span className="issue-group-desc">{meta.description}</span>}
-                </header>
-
-                {rows.length === 0 ? (
-                  <p className="issue-group-empty">没有此类问题。</p>
-                ) : (
-                  <ul className="issue-rows">
-                    {rows.map((issue) => {
-                      const body = (
-                        <>
-                          <span className="issue-detail">{issue.detail}</span>
-                          <span className="issue-target mono">{issue.target}</span>
-                          {issue.fixable ? (
-                            <span className="chip chip--warn" title="可在宿主应用中处理">
-                              可修复
-                            </span>
-                          ) : null}
-                        </>
-                      );
-
-                      return (
-                        <li key={issue.id}>
-                          {kind === 'unclaimed_source' && issue.identity_key !== '' ? (
-                            <button
-                              type="button"
-                              className="issue-row issue-row--link"
-                              title="打开该 skill 详情"
-                              onClick={() => {
-                                onOpenSkill(issue.identity_key);
-                              }}
-                            >
-                              {body}
-                              <span className="issue-arrow" aria-hidden="true">
-                                →
-                              </span>
-                            </button>
-                          ) : (
-                            <div className="issue-row">{body}</div>
-                          )}
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-              </section>
-            );
-          })}
-          {truncated ? <p className="page-note">问题总数超过 500 条，列表只显示前 500 条。</p> : null}
-          <p className="page-note">打开待确认来源的条目，可关联 GitHub 仓库或标记为我写的。</p>
-        </div>
-      ) : null}
-    </div>
-  );
+export function TrackingPage({ generation, onScanned, onOpenSkill }: {
+  generation: string; onScanned: () => void; onOpenSkill: (key: string) => void;
+}) {
+  const issues = useApi(api.issues, [generation], true);
+  const [editing, setEditing] = useState('');
+  const [busy, setBusy] = useState('');
+  const [plan, setPlan] = useState<Plan>();
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+  const data = issues.state.data;
+  function refreshView() { issues.reload(); onScanned(); }
+  async function refresh() {
+    setBusy('refresh'); setError(''); setMessage('');
+    try { await api.rescan(); refreshView(); setMessage('已重新扫描本机'); }
+    catch (err) { setError(describeError(err)); }
+    finally { setBusy(''); }
+  }
+  async function preview(issue: Issue) {
+    setBusy(issue.id); setError(''); setMessage('');
+    try { setPlan(await api.previewDangling(issue.location)); }
+    catch (err) { setError(describeError(err)); issues.reload(); }
+    finally { setBusy(''); }
+  }
+  return <div className="page health-page">
+    <PageHeader title="安装健康" sub="检查本机的失效入口、待确认来源和重复副本。"
+      aside={<button type="button" className="button" disabled={Boolean(busy)} onClick={() => void refresh()}>
+        {busy === 'refresh' ? '正在扫描…' : '刷新'}</button>} />
+    {error && <p className="action-message" role="alert">{error}</p>}
+    {message && <p className="action-message" role="status">{message}</p>}
+    {issues.state.status === 'error' && <ErrorState message={issues.state.error} onRetry={issues.reload} />}
+    {!data && issues.state.status === 'loading' && <p role="status">正在读取安装健康…</p>}
+    {data && <>
+      <section className="stats" aria-label="安装统计">
+        {[[data.counts.skills, '个本机 skill'], [data.counts.placements, '个安装位置'], [data.counts.issues, '项待处理']].map(([n, label]) =>
+          <div className="stat" key={label}><span className="stat-value mono">{n}</span><span className="stat-label">{label}</span></div>)}
+      </section>
+      {data.total === 0 && <div className="state"><h2 className="state-title">安装状态良好</h2><p>本次扫描没有发现需要处理的问题。</p></div>}
+      {ISSUE_KIND_ORDER.map(kind => {
+        const rows = data.items.filter(i => i.kind === kind);
+        const meta = data.kinds[kind];
+        if (!rows.length || !meta) return null;
+        return <section className="issue-group" key={kind} aria-label={meta.label}>
+          <header className="issue-group-head"><h2 className="issue-group-title">{meta.label}</h2>
+            <span className="issue-group-count mono">{rows.length}</span><Badge tone={severityTone(meta.severity)}>{severityLabel(meta.severity)}</Badge></header>
+          <ul className="issue-rows">{rows.map(issue => <li key={issue.id}>
+            <div className="issue-row"><div className="issue-description">
+              <strong>{issue.name}</strong><span>{issue.agents.map(hostKindLabel).join('、')}</span>
+              <p>{kind === 'dangling_link' ? '此入口指向的文件或目录已不存在。' : kind === 'unclaimed_source'
+                ? '本机尚无来源记录。' : issue.detail}</p>
+              <details><summary>查看位置</summary><code>{issue.location}</code>
+                {issue.missingTarget && <p>原目标 <code>{issue.missingTarget}</code></p>}</details>
+            </div>
+            {kind === 'unclaimed_source' ? <button type="button" className="button" aria-expanded={editing === issue.id}
+              onClick={() => setEditing(editing === issue.id ? '' : issue.id)}>{editing === issue.id ? '收起' : '确认来源'}</button>
+              : kind === 'dangling_link' ? issue.fixable
+                ? <button type="button" className="button" disabled={Boolean(busy)} onClick={() => void preview(issue)}>
+                  {busy === issue.id ? '正在准备…' : '预览解除失效链接'}</button>
+                : <small>请在对应的 Agent 或源码仓库中检查此入口。</small>
+              : <button type="button" className="button" onClick={() => onOpenSkill(issue.identity_key)}>查看副本</button>}
+            </div>
+            {editing === issue.id && <ClaimSource issue={issue} onSaved={() => {
+              setEditing(''); setMessage('已确认 ' + issue.name + ' 的来源'); refreshView();
+            }} />}
+          </li>)}</ul>
+        </section>;
+      })}
+      {data.total > data.items.length && <p className="block-note">显示前 {data.items.length} 项，共 {data.total} 项。</p>}
+    </>}
+    {plan && <MaintenancePreview plan={plan} onClose={() => setPlan(undefined)} onApplied={result => {
+      setPlan(undefined); setMessage('已解除失效链接 · ' + result.target); refreshView();
+    }} />}
+  </div>;
 }

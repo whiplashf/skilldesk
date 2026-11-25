@@ -50,7 +50,15 @@ def inline(text: str) -> str:
         elif not safe_url(url):
             parts.append(esc(label))
         elif image:
-            parts.append(f'<img alt="{html.escape(label, quote=True)}" src="{html.escape(url, quote=True)}">')
+            alt = html.escape(label, quote=True)
+            value = html.escape(url, quote=True)
+            if urlsplit(url).scheme.lower() in {"http", "https"}:
+                parts.append(f'<button type="button" data-remote-image="{value}" data-alt="{alt}">'
+                             f'加载外部图片{(" · " + esc(label)) if label else ""}</button>')
+            elif not urlsplit(url).scheme:
+                parts.append(f'<img alt="{alt}" src="{value}">')
+            else:
+                parts.append(esc(label))
         else:
             parts.append(f'<a href="{html.escape(url, quote=True)}" target="_blank" rel="noreferrer">{_emphasis(label)}</a>')
         start = match.end()
@@ -88,15 +96,53 @@ def render_table(rows: list[str]) -> str:
     return "".join(out)
 
 
-def render_list(items: list[tuple[int, str]]) -> str:
-    out = ['<ul class="md-list">']
-    for depth, text in items:
-        out.append(f'<li class="d{min(depth, 3)}">{inline(text)}</li>')
-    out.append("</ul>")
-    return "".join(out)
+def strip_indent(line: str, columns: int) -> str | None:
+    """Remove structural indentation while preserving tabs and spaces inside the block."""
+    prefix = spaces = 0
+    while prefix < len(line) and line[prefix] in " \t" and spaces < columns:
+        spaces += 1 if line[prefix] == " " else 4 - spaces % 4
+        prefix += 1
+    return " " * (spaces - columns) + line[prefix:] if spaces >= columns else None
 
 
-def render(markdown: str) -> str:
+def render_list(lines: list[str], start: int, depth: int) -> tuple[str, int]:
+    first = lines[start].expandtabs(4)
+    pattern = OL_RE if OL_RE.match(first) else UL_RE
+    marker = pattern.match(first)
+    indent = len(marker[1])
+    tag = "ol" if pattern is OL_RE else "ul"
+    number = re.match(r"\d+", first.lstrip()) if tag == "ol" else None
+    initial = f' start="{number[0]}"' if number and number[0] != "1" else ""
+    out = [f'<{tag} class="md-list"{initial}>']
+    i = start
+    while i < len(lines):
+        item = pattern.match(lines[i])
+        if not item or len(item[1].expandtabs(4)) != indent:
+            break
+        body = [item[2]]
+        width = len(lines[i][:item.start(2)].expandtabs(4))
+        i += 1
+        while i < len(lines):
+            line = lines[i]
+            content = strip_indent(line, width)
+            if content is not None:
+                body.append(content)
+            elif not line.strip():
+                body.append("")
+            elif (body[-1].strip() and not FENCE_RE.match(body[-1]) and not FENCE_RE.match(line)
+                  and not (HEAD_RE.match(line) or UL_RE.match(line) or OL_RE.match(line) or HR_RE.match(line))
+                  and not line.lstrip().startswith(">")):
+                body.append(line)
+            else:
+                break
+            i += 1
+        out.append("<li>" + render("\n".join(body), _depth=depth + 1) + "</li>")
+    return "".join(out) + f"</{tag}>", i
+
+
+def render(markdown: str, *, _depth: int = 0) -> str:
+    if _depth >= 48:
+        return "<pre>" + esc(markdown) + "</pre>"
     lines = markdown.replace("\r\n", "\n").split("\n")
     out: list[str] = []
     i, total = 0, len(lines)
@@ -104,6 +150,19 @@ def render(markdown: str) -> str:
         line = lines[i]
         if not line.strip():
             i += 1
+            continue
+
+        if strip_indent(line, 4) is not None:
+            buf = []
+            while i < total:
+                content = strip_indent(lines[i], 4)
+                if content is None and lines[i].strip():
+                    break
+                buf.append(content or "")
+                i += 1
+            while buf and not buf[-1]:
+                buf.pop()
+            out.append(f"<pre><code>{esc(chr(10).join(buf))}</code></pre>")
             continue
 
         fence = FENCE_RE.match(line)
@@ -147,25 +206,13 @@ def render(markdown: str) -> str:
             while i < total and lines[i].lstrip().startswith(">"):
                 buf.append(re.sub(r"^\s*>\s?", "", lines[i]))
                 i += 1
-            out.append(f"<blockquote>{render(chr(10).join(buf))}</blockquote>")
+            out.append(f"<blockquote>{render(chr(10).join(buf), _depth=_depth + 1)}</blockquote>")
             continue
 
         listed = UL_RE.match(line) or OL_RE.match(line)
         if listed:
-            items: list[tuple[int, str]] = []
-            base = len(listed.group(1).expandtabs(4))
-            while i < total:
-                item = UL_RE.match(lines[i]) or OL_RE.match(lines[i])
-                if item:
-                    indent = len(item.group(1).expandtabs(4))
-                    items.append((max(0, (indent - base) // 2), item.group(2)))
-                    i += 1
-                elif lines[i].strip() and items and not re.match(r"^\s*([-*+]|\d+[.)])\s", lines[i]) and not HEAD_RE.match(lines[i]):
-                    items[-1] = (items[-1][0], items[-1][1] + " " + lines[i].strip())
-                    i += 1
-                else:
-                    break
-            out.append(render_list(items))
+            html_list, i = render_list(lines, i, _depth)
+            out.append(html_list)
             continue
 
         buf = []

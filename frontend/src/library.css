@@ -1,8 +1,8 @@
 /* Repository directory, skill inventory and reading surface. */
 .library-workspace {
-  display: grid; grid-template-areas: 'navigation tools' 'navigation panes';
+  display: grid; grid-template-areas: 'navigation tools' 'navigation feedback' 'navigation panes';
   grid-template-columns: clamp(207px, 17vw, 256px) minmax(0, 1fr);
-  grid-template-rows: auto minmax(0, 1fr); height: 100%; min-height: 0;
+  grid-template-rows: auto auto minmax(0, 1fr); height: 100%; min-height: 0;
   background: var(--surface);
 }
 .library-navigation {
@@ -130,7 +130,7 @@
   .library-search-line { gap: 7px; }
 }
 @media (max-width: 860px) {
-  .library-workspace { grid-template-columns: minmax(0,1fr); grid-template-rows: auto auto minmax(0,1fr); grid-template-areas: 'tools' 'navigation' 'panes'; }
+  .library-workspace { grid-template-columns: minmax(0,1fr); grid-template-rows: auto auto auto minmax(0,1fr); grid-template-areas: 'tools' 'navigation' 'feedback' 'panes'; }
   .library-navigation { overflow: visible; padding: 5px 12px 8px; border-right: 0; border-bottom: 1px solid var(--line); }
   .nav-title { display: none; }
   .scope-links { display: flex; flex-wrap: wrap; gap: 3px; }
@@ -148,7 +148,7 @@
   .library-tools { padding: 9px 12px; }
   .library-panes { display: block; }
   .library-panes .list-column, .library-panes .detail-pane { height: 100%; }
-  .library-workspace.reading { grid-template: minmax(0,1fr) / minmax(0,1fr); grid-template-areas: 'panes'; }
+  .library-workspace.reading { grid-template: auto minmax(0,1fr) / minmax(0,1fr); grid-template-areas: 'feedback' 'panes'; }
   .reading .library-navigation, .reading .library-tools, .reading .list-column { display: none; }
   .reading .detail-pane { display: block; }
   .library-panes .detail { padding: 12px 16px 32px; }
@@ -207,3 +207,22 @@
 .maintenance-dialog footer { justify-content: flex-end; padding-top: 14px; }
 .maintenance-dialog .plan-confirm { background: var(--accent); color: var(--surface); }
 .maintenance-dialog .plan-confirm:disabled { opacity: .48; }
+
+.library-notice { grid-area: feedback; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 8px 14px; min-width: 0; background: var(--accent-soft); border-bottom: 1px solid var(--line); color: var(--ink); font-size: 13px; overflow-wrap: anywhere; }
+.library-notice > span { flex: 1 1 180px; }
+.library-notice label { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; min-width: 0; }
+.library-notice input { min-width: 90px; width: 15em; max-width: 50vw; font: 12px var(--mono); }
+.notice-close { margin-left: auto; font-size: 18px; }
+.issue-description { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.issue-description > span, .source-comparison small { display: block; font-size: 12px; color: var(--ink-2); }
+.issue-description p, .source-comparison p { margin: 4px 0; }
+.issue-description summary, .install-settings summary { cursor: pointer; }
+.issue-description details, .source-comparison { font-size: 13px; }
+.health-page .issue-row { display: flex; flex-wrap: wrap; align-items: start; justify-content: space-between; gap: 10px; }
+.issue-claim, .source-comparison, .reader-body > .settings-form { padding: 12px; background: var(--surface-2); overflow-wrap: anywhere; }
+.empty-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.install-choices ul { list-style: none; padding: 0; display: grid; gap: 5px; max-height: 20rem; overflow-y: auto; }
+.install-choices .button { display: grid; width: 100%; text-align: start; gap: 2px; }
+.install-choices small { overflow-wrap: anywhere; color: var(--ink-2); }
+.prose button[data-remote-image] { padding: 3px 8px; border: 1px solid var(--line); background: var(--surface-2); color: var(--accent); font: inherit; cursor: pointer; border-radius: var(--radius); }
+.prose li > p { margin: .2em 0; }

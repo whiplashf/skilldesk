@@ -117,6 +117,7 @@ def apply_claim(item: dict, claim: dict[str, str]) -> dict:
     item["provenance"].update(
         confidence="claimed",
         label=claim["label"],
+        sourceLabel=claim["label"],
         path=claim["path"],
         evidence="我写的" if claim["kind"] == "mine" else "用户关联",
     )

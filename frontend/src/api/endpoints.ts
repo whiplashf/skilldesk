@@ -43,6 +43,8 @@ export const api = {
     writeJson<MaintenancePreview>('/api/maintenance/install-preview', 'POST', { root, repository, path }),
   previewPlacement: (identity_key: string, entry: string, action: PlacementAction) =>
     writeJson<MaintenancePreview>('/api/maintenance/placement-preview', 'POST', { identity_key, entry, action }),
+  previewDangling: (entry: string) =>
+    writeJson<MaintenancePreview>('/api/maintenance/dangling-preview', 'POST', { entry }),
   confirm: (id: string, accept_license: boolean, accept_local: boolean) =>
     writeJson<MaintenanceResult>('/api/maintenance/confirm', 'POST', { id, accept_license, accept_local }),
   projects: (signal: AbortSignal) => getJson<{ saved: string[]; effective: string[] }>('/api/projects', signal),
@@ -51,7 +53,9 @@ export const api = {
   patch: (item: SkillSummary, changes: AssetChanges) =>
     writeJson<SkillSummary>('/api/assets/' + encodeURIComponent(item.identity_key), 'PATCH', changes, item.libraryRevision),
   translate: (key: string) => writeJson<{ html: string; cached: boolean }>('/api/ai/translate', 'POST', { identity_key: key }),
-  checkVersion: (key: string, force = false) => writeJson<VersionStatus>('/api/check', 'POST', { identity_key: key, force }),
+  checkVersion: (key: string) => writeJson<VersionStatus>('/api/check', 'POST', { identity_key: key, force: true }),
+  checkBatch: (keys: string[]) =>
+    writeJson<{ items: { key: string; error?: string }[] }>('/api/check-batch', 'POST', { keys }),
   aiSettings: (signal: AbortSignal) => getJson<AISettings>('/api/settings/ai', signal),
   upstreamQuota: (signal: AbortSignal) => getJson<UpstreamQuota>('/api/upstream/quota', signal),
   saveAI: (body: {baseUrl: string; model: string; apiKey?: string}) => writeJson<AISettings>('/api/settings/ai', 'PUT', body),
@@ -78,7 +82,7 @@ export const api = {
       signal,
     ),
 
-  skill: (identityKey: string, signal: AbortSignal): Promise<SkillDetail> =>
+  skill: (identityKey: string, signal?: AbortSignal): Promise<SkillDetail> =>
     getJson<SkillDetail>(skillPath(identityKey), signal),
 
   files: (identityKey: string, signal: AbortSignal): Promise<FilesResponse> =>

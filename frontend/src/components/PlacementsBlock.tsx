@@ -9,10 +9,11 @@ import { Badge } from './Badge';
 export interface PlacementsBlockProps {
   placements: Placement[];
   identityKey: string;
+  differingCopies: Set<string>;
   onApplied: (result: MaintenanceResult) => void;
 }
 
-export function PlacementsBlock({ placements, identityKey, onApplied }: PlacementsBlockProps) {
+export function PlacementsBlock({ placements, identityKey, onApplied, differingCopies }: PlacementsBlockProps) {
   const [pending, setPending] = useState('');
   const [plan, setPlan] = useState<Plan>();
   const [error, setError] = useState<{ entry: string; message: string }>();
@@ -50,7 +51,8 @@ export function PlacementsBlock({ placements, identityKey, onApplied }: Placemen
             {placement.actions.length > 0 && <div className="placement-actions">
               {placement.actions.map(action => <button key={action} type="button" className="button"
                 disabled={Boolean(pending)} onClick={() => void preview(placement.entry_path, action)}>
-                {'预览' + actionLabel[action]}</button>)}
+                {'预览' + actionLabel[action]}{action === 'update' && differingCopies.has(placement.realpath)
+                  ? ' · ' + placement.installedSource?.repo : ''}</button>)}
               {pending === placement.entry_path && <span role="status">正在准备预览…</span>}
             </div>}
             {error?.entry === placement.entry_path && <p className="action-message" role="alert">{error.message}</p>}

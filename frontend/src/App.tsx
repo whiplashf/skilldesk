@@ -70,9 +70,9 @@ export function App() {
             onOpenSkill={openSkill}
           />
         ) : route.name === 'tracking' ? (
-          <TrackingPage health={health.state} onRetryHealth={health.reload} onOpenSkill={openSkill} />
+          <TrackingPage generation={health.state.data?.meta.generation ?? ''} onScanned={health.reload} onOpenSkill={openSkill} />
         ) : route.name === 'settings' ? (
-          <SettingsPage health={health.state} onRetryHealth={health.reload} />
+          <SettingsPage health={health.state} onRetryHealth={health.reload} section={route.section} />
         ) : (
           <div className="page">
             <EmptyState

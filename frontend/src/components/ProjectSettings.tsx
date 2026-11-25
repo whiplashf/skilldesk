@@ -4,7 +4,7 @@ import { api } from '../api/endpoints';
 import { useApi } from '../lib/useApi';
 import { ErrorState } from './ErrorState';
 
-export function ProjectSettings({ onChange }: { onChange: () => void }) {
+export function ProjectSettings({ onChange, focus }: { onChange: () => void; focus: boolean }) {
   const projects = useApi(api.projects, [], true);
   const [path, setPath] = useState('');
   const [busy, setBusy] = useState(false);
@@ -38,7 +38,7 @@ export function ProjectSettings({ onChange }: { onChange: () => void }) {
       </li>)}
     </ul>}
     <form className="settings-form" onSubmit={event => { event.preventDefault(); void change(path.trim()); }}>
-      <label>项目绝对路径<input required value={path} placeholder="/path/to/project" onChange={e => setPath(e.target.value)} /></label>
+      <label>项目绝对路径<input autoFocus={focus} required value={path} placeholder="/path/to/project" onChange={e => setPath(e.target.value)} /></label>
       <div className="form-actions"><button className="button" disabled={busy || !path.trim()}>添加项目</button>
         <span role="status">{message}</span></div>
     </form>

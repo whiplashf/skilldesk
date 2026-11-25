@@ -4,7 +4,7 @@ export type Route =
   | { name: 'library' }
   | { name: 'skill'; identityKey: string }
   | { name: 'tracking' }
-  | { name: 'settings' }
+  | { name: 'settings'; section: string }
   | { name: 'notFound'; raw: string };
 
 export const HASH = {
@@ -89,7 +89,7 @@ function parseRoute(hash: string): Route {
     return { name: 'tracking' };
   }
   if (head === 'settings') {
-    return { name: 'settings' };
+    return { name: 'settings', section: new URLSearchParams(path.split('?')[1]).get('section') || '' };
   }
   return { name: 'notFound', raw: path };
 }

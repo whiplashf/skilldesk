@@ -91,6 +91,34 @@ def token(path: Path) -> list[int]:
     return [info.st_dev, info.st_ino]
 
 
+def installed_source(path: Path) -> dict | None:
+    """The receipt for this physical copy, independently of a user's tracking preference."""
+    try:
+        lock = lock_path(path.parent)
+        if lock and plain(path):
+            return source_of(lock_data(lock)["skills"].get(path.name)).json()
+    except (MaintenanceError, OSError, ValueError):
+        pass
+    return None
+
+
+def dangling_target(path: Path, roots: set[Path] | None = None) -> str:
+    """Return the link text only for a missing direct entry we are allowed to detach."""
+    if path.parent not in (link_roots() if roots is None else roots) or path.name.startswith("."):
+        return ""
+    try:
+        text = os.readlink(path)
+    except OSError:
+        return ""
+    try:
+        path.stat()
+    except (FileNotFoundError, NotADirectoryError):
+        return text if path.is_symlink() and not tracked(path) else ""
+    except (OSError, RuntimeError):
+        pass
+    return ""
+
+
 def manifest(directory: Path) -> dict:
     """Fingerprint all entries, including empty folders, permissions and link text, without following links."""
     entries = {}

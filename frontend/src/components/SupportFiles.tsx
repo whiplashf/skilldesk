@@ -1,23 +1,20 @@
-import type { FilesResponse } from '../api/types';
+import { api } from '../api/endpoints';
 import { formatBytes } from '../lib/format';
 import { fileKindLabel } from '../lib/labels';
-import type { AsyncState } from '../lib/useApi';
+import { useApi } from '../lib/useApi';
 import { ErrorState } from './ErrorState';
 import { Skeleton } from './Skeleton';
 
 export interface SupportFilesProps {
-  state: AsyncState<FilesResponse>;
+  identityKey: string;
+  generation: string;
   onOpenFile: (rel: string) => void;
-  onRetry: () => void;
 }
 
-export function SupportFiles({ state, onOpenFile, onRetry }: SupportFilesProps) {
+export function SupportFiles({ identityKey, generation, onOpenFile }: SupportFilesProps) {
+  const { state, reload: onRetry } = useApi(signal => api.files(identityKey, signal), [identityKey, generation], true);
   return (
     <section className="block">
-      <h3 className="block-title">
-        支持文件
-        {state.status === 'ready' ? <span className="block-count mono">{state.data.items.length}</span> : null}
-      </h3>
 
       {state.status === 'loading' ? (
         <div className="file-skeleton" aria-hidden="true">
