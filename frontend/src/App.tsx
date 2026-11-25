@@ -31,7 +31,7 @@ export function App() {
   // `/` is global: surfaces without a search box forward it to the library.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== '/' || event.metaKey || event.ctrlKey || event.altKey) {
+      if (document.querySelector('dialog[open]') || event.key !== '/' || event.metaKey || event.ctrlKey || event.altKey) {
         return;
       }
       if (isTypingTarget(event.target) || isLibrarySurface(route)) {

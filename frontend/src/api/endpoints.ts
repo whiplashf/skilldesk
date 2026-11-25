@@ -2,6 +2,9 @@ import { getJson, withQuery, writeJson } from './client';
 import type { AISettings, AssetChanges, SkillSummary, UpstreamQuota, VersionStatus } from './types';
 import type {
   Facets,
+  MaintenancePreview,
+  MaintenanceResult,
+  PlacementAction,
   FileContent,
   FilesResponse,
   Health,
@@ -34,6 +37,14 @@ function skillPath(identityKey: string): string {
 }
 
 export const api = {
+  installRoots: (signal: AbortSignal) =>
+    getJson<{ items: { path: string; label: string }[] }>('/api/maintenance/roots', signal),
+  previewInstall: (root: string, repository: string, path: string) =>
+    writeJson<MaintenancePreview>('/api/maintenance/install-preview', 'POST', { root, repository, path }),
+  previewPlacement: (identity_key: string, entry: string, action: PlacementAction) =>
+    writeJson<MaintenancePreview>('/api/maintenance/placement-preview', 'POST', { identity_key, entry, action }),
+  confirm: (id: string, accept_license: boolean, accept_local: boolean) =>
+    writeJson<MaintenanceResult>('/api/maintenance/confirm', 'POST', { id, accept_license, accept_local }),
   projects: (signal: AbortSignal) => getJson<{ saved: string[]; effective: string[] }>('/api/projects', signal),
   changeProject: (path: string, remove = false) => writeJson('/api/projects', 'POST', { path, remove }),
   rescan: () => writeJson<Health>('/api/scan', 'POST'),

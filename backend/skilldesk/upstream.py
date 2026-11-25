@@ -317,9 +317,9 @@ def _dir_tree(view: dict, dir_path: str) -> str:
 
 def _dir_sha_at(ref: str, dir_path: str, get, view: dict) -> str:
     """Directory tree SHA at an arbitrary ref, falling back to a contents listing."""
-    if ref == view["head"]:
-        return _dir_tree(view, dir_path)
-    pinned = _tree_at(view["repo"], ref, get)
+    if ref == view["head"] and (current := _dir_tree(view, dir_path)):
+        return current
+    pinned = _tree_at(view["repo"], ref, get) if ref != view["head"] else {}
     if pinned and pinned.get(dir_path):
         return pinned[dir_path]
     if not dir_path:
@@ -448,7 +448,8 @@ def evaluate(item: dict, source: dict, get, *, fresh: bool = False) -> dict:
         installed_tree = _dir_sha_at(source["ref"], dir_path, get, view)
     if not installed_tree and not source.get("ref"):
         installed_tree = (baseline or {}).get("installedTree", "")
-    edited = bool(baseline and baseline.get("localTree") and baseline["localTree"] != local_tree)
+    edited = bool(baseline and baseline.get("localTree") and baseline["localTree"] != local_tree
+                  and local_tree != installed_tree)
     note = "；本地副本自记录后被改动" if edited else ""
 
     def settle(value: str, detail: str) -> dict:

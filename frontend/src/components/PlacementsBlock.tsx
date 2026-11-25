@@ -1,16 +1,31 @@
-import type { Placement } from '../api/types';
+import { useState } from 'react';
+import { api } from '../api/endpoints';
+import { describeError } from '../api/client';
+import { actionLabel, MaintenancePreview } from './MaintenancePreview';
+import type { MaintenancePreview as Plan, MaintenanceResult, PlacementAction, Placement } from '../api/types';
 import { hostKindLabel } from '../lib/labels';
 import { Badge } from './Badge';
 
 export interface PlacementsBlockProps {
   placements: Placement[];
+  identityKey: string;
+  onApplied: (result: MaintenanceResult) => void;
 }
 
-export function PlacementsBlock({ placements }: PlacementsBlockProps) {
+export function PlacementsBlock({ placements, identityKey, onApplied }: PlacementsBlockProps) {
+  const [pending, setPending] = useState('');
+  const [plan, setPlan] = useState<Plan>();
+  const [error, setError] = useState<{ entry: string; message: string }>();
+  async function preview(entry: string, action: PlacementAction) {
+    setPending(entry); setError(undefined);
+    try { setPlan(await api.previewPlacement(identityKey, entry, action)); }
+    catch (err) { setError({ entry, message: describeError(err) }); }
+    finally { setPending(''); }
+  }
   return (
     <section className="block">
       <h3 className="block-title">
-        落点 <span className="block-count mono">{placements.length}</span>
+        安装位置 <span className="block-count mono">{placements.length}</span>
       </h3>
       <ul className="placements">
         {placements.map((placement) => (
@@ -31,9 +46,19 @@ export function PlacementsBlock({ placements }: PlacementsBlockProps) {
                 → {placement.realpath}
               </div>
             ) : null}
+            {placement.managementNote && <small className="block-note">{placement.managementNote}</small>}
+            {placement.actions.length > 0 && <div className="placement-actions">
+              {placement.actions.map(action => <button key={action} type="button" className="button"
+                disabled={Boolean(pending)} onClick={() => void preview(placement.entry_path, action)}>
+                {'预览' + actionLabel[action]}</button>)}
+              {pending === placement.entry_path && <span role="status">正在准备预览…</span>}
+            </div>}
+            {error?.entry === placement.entry_path && <p className="action-message" role="alert">{error.message}</p>}
           </li>
         ))}
       </ul>
+      {plan && <MaintenancePreview plan={plan} onClose={() => setPlan(undefined)}
+        onApplied={result => { setPlan(undefined); onApplied(result); }} />}
     </section>
   );
 }

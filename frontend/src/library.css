@@ -184,3 +184,26 @@
   .repository-directory { flex-wrap: nowrap; max-height: 42px; overflow-x: auto; }
   .repository-option { flex: none; }
 }
+
+.placement-actions, .maintenance-dialog header, .maintenance-dialog footer { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.placement-actions { margin-top: 5px; font-size: 12px; }
+.placement-actions .button { padding: 4px 9px; font-size: 12px; }
+.install-settings summary { cursor: pointer; }
+.install-settings .settings-form { margin-top: 14px; }
+.install-settings select { width: 100%; padding: 8px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+.maintenance-dialog { color: var(--ink); background: var(--surface); border: 1px solid var(--line-strong); border-radius: 12px; width: min(520px, 92vw); max-height: 86dvh; padding: 22px; overflow: auto; box-shadow: var(--shadow-pop); }
+.maintenance-dialog::backdrop { background: rgb(10 33 21 / 45%); }
+.maintenance-dialog header { justify-content: space-between; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.maintenance-dialog h2 { font-size: 19px; margin: 0; }
+.maintenance-dialog dl { display: grid; grid-template-columns: minmax(84px, auto) minmax(0, 1fr); gap: 7px 12px; font-size: 13px; }
+.maintenance-dialog dd { margin: 0; }
+.maintenance-dialog dt { color: var(--ink-2); }
+.maintenance-dialog code, .action-message, .placement .block-note { overflow-wrap: anywhere; }
+.maintenance-dialog p, .plan-files, .maintenance-dialog .check-field { font-size: 13px; }
+.plan-files { border-top: 1px solid var(--line); padding: 7px 0; }
+.plan-files summary { cursor: pointer; color: var(--accent); }
+.plan-files ul { padding-left: 24px; }
+.maintenance-dialog .check-field { margin: 10px 0; align-items: baseline; }
+.maintenance-dialog footer { justify-content: flex-end; padding-top: 14px; }
+.maintenance-dialog .plan-confirm { background: var(--accent); color: var(--surface); }
+.maintenance-dialog .plan-confirm:disabled { opacity: .48; }

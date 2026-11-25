@@ -143,7 +143,7 @@ export function LibraryPage({ selectedKey, onOpenSkill, generation, onScanned }:
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (document.querySelector('dialog[open]') || event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
       if (event.key === 'Escape') {
         if (files.length) setFiles(current => current.slice(0, -1));
         else if (advanced.current?.open) advanced.current.open = false;
@@ -211,7 +211,12 @@ export function LibraryPage({ selectedKey, onOpenSkill, generation, onScanned }:
       </div>
       <div className="detail-pane" ref={detailPane}>{preview && <SkillDetail key={preview} identityKey={preview}
         generation={generation + '-' + epoch} backHref={libraryHref(position)} busy={busy}
-        onSave={save} onFile={openFile} onVersion={refreshData} />}</div>
+        onSave={save} onFile={openFile} onVersion={refreshData} onMaintenance={result => {
+          const label = result.action === 'update' ? '已升级' : result.action === 'unlink' ? '已解除链接' : '已卸载';
+          setMessage(label + ' · ' + result.target + (result.backup ? '。原副本保存在 ' + result.backup : ''));
+          if (result.action !== 'update') navigate(libraryHref(position));
+          refreshData(); onScanned();
+        }} />}</div>
     </div>
     {file && preview && <FileOverlay key={file.rel} skillKey={preview} rel={file.rel} anchor={file.anchor} raw={file.raw} onFile={openFile}
       onClose={() => setFiles(current => current.slice(0, -1))} />}

@@ -14,7 +14,7 @@ export function isAbortError(error: unknown): boolean {
 
 export function describeError(error: unknown): string {
   if (error instanceof ApiError) {
-    if (error.status === 404) {
+    if (error.status === 404 && error.message === 'unknown skill') {
       return '未找到该 skill';
     }
     if (error.status === 0) {

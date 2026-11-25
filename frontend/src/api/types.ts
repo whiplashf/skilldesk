@@ -67,7 +67,32 @@ export interface SkillSummary {
   provenance: Provenance;
 }
 
+export type PlacementAction = 'update' | 'uninstall' | 'unlink';
+export type MaintenanceAction = 'install' | PlacementAction;
+
+export interface MaintenancePreview {
+  id: string;
+  action: MaintenanceAction;
+  target: string;
+  source: { host: string; repo: string; path: string } | null;
+  commit: string;
+  backup: string;
+  license: string;
+  expiresAt: number;
+  localState: 'clean' | 'modified' | 'unknown';
+  links: string[];
+  linkTarget: string;
+  changes: { added: string[]; changed: string[]; removed: string[] };
+  files: number;
+  bytes: number;
+  scripts: string[];
+}
+
+export interface MaintenanceResult { action: MaintenanceAction; target: string; backup: string }
+
 export interface Placement {
+  actions: PlacementAction[];
+  managementNote: string;
   host_root: string;
   kind: string;
   entry: string;

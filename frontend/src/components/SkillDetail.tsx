@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api/endpoints';
 import { ApiError, describeError } from '../api/client';
-import type { AssetChanges, SkillDetail as Detail, SkillSummary } from '../api/types';
+import type { AssetChanges, MaintenanceResult, SkillDetail as Detail, SkillSummary } from '../api/types';
 import { accessSummary, healthLabel, VERSION_LABELS } from '../lib/labels';
 import { formatDateTime } from '../lib/format';
 import { HASH } from '../lib/route';
@@ -49,10 +49,11 @@ function OriginEditor({ data, save, busy }: { data: Detail; save: Save; busy: bo
 interface Props {
   backHref: string;
   identityKey: string; generation: string; busy: boolean; onSave: Save;
+  onMaintenance: (result: MaintenanceResult) => void;
   onFile: (target: DocumentTarget) => void; onVersion: () => void;
 }
 
-export function SkillDetail({ identityKey, generation, backHref, busy, onSave, onFile, onVersion }: Props) {
+export function SkillDetail({ identityKey, generation, backHref, busy, onSave, onFile, onVersion, onMaintenance }: Props) {
   const detail = useApi(signal => api.skill(identityKey, signal), [identityKey, generation], true);
   const files = useApi(signal => api.files(identityKey, signal), [identityKey, generation], true);
   const [translation, setTranslation] = useState<{ hash: string; html: string }>();
@@ -98,6 +99,8 @@ export function SkillDetail({ identityKey, generation, backHref, busy, onSave, o
       <div className="section-heading"><h2>GitHub 版本{!status && item.upstream.path && <small> · 尚未检查</small>}</h2>
         <button type="button" className="button" disabled={checking || !item.upstream.path} onClick={() => void checkVersion()}>
           {checking ? '正在检查…' : '检查版本'}</button></div>
+      {new Set(item.placements.map(p => p.realpath)).size > 1 && <p className="block-note">
+        此次比较使用 <code>{item.realpath}</code>。可在各安装位置预览对应副本的变更。</p>}
       {status ? <div className={versionError ? 'version-result is-stale' : 'version-result'}>
         {versionError ? <small>上次检查结果 · </small> : null}<strong>{VERSION_LABELS[status.status]}</strong>
         {(status.installed || status.latest) && <span className="mono">{[status.installed, status.latest].filter(Boolean).join(' → ')}</span>}
@@ -109,7 +112,7 @@ export function SkillDetail({ identityKey, generation, backHref, busy, onSave, o
     <details className="reader-fold"><summary>来源与可用范围</summary>
       <OriginEditor data={item} save={onSave} busy={busy} />
       <ProvenanceBlock provenance={item.provenance} confidenceLabel={item.confidenceLabel} />
-      <PlacementsBlock placements={item.placements} />
+      <PlacementsBlock placements={item.placements} identityKey={identityKey} onApplied={onMaintenance} />
       {item.issues.map(issue => <p className="block-note" key={issue.id}>{healthLabel(issue.kind)} · {issue.detail}</p>)}
       <p className="block-note">许可证 {item.license || '未声明'} · {item.lines} 行 · {formatDateTime(item.mtime)}</p>
     </details>

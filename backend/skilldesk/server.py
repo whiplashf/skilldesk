@@ -6,13 +6,14 @@ from __future__ import annotations
 
 import base64
 import hmac
+import logging
 import mimetypes
 import os
 import secrets
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import quote
 
 import httpx
@@ -21,13 +22,14 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
-from . import __version__, library, translation, upstream
+from . import __version__, library, maintenance, placements, translation, upstream
 from . import index as index_mod
 from .config import config_path, index_path, load_config
 from .health import KINDS as HEALTH_KINDS
 from .health import detect
 from .identity import CONFIDENCE_LABEL
 from .markdown import render, split_frontmatter
+from .packages import MaintenanceError
 from .scan import MAX_SKILL_BYTES, input_stamp, read_body, scan
 
 RESCAN_THROTTLE_SECONDS = 3.0
@@ -78,6 +80,27 @@ class AISettings(BaseModel):
 class ProjectChange(BaseModel):
     path: str
     remove: bool = False
+
+
+class InstallPreview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    root: str
+    repository: str
+    path: str = "SKILL.md"
+
+
+class PlacementPreview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    identity_key: str
+    entry: str
+    action: Literal["update", "uninstall", "unlink"]
+
+
+class Confirmation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str
+    accept_license: bool = False
+    accept_local: bool = False
 
 
 class SkillAction(BaseModel):
@@ -193,6 +216,10 @@ def _file_kind(name: str) -> str:
 def create_app(db_path: str | Path | None = None, *, remote_token: str | None = None) -> FastAPI:
     app = FastAPI(title="skilldesk", version=__version__, docs_url="/api/docs", redoc_url=None)
     database = Path(db_path) if db_path else index_path()
+    try:
+        maintenance.recover_pending()
+    except (MaintenanceError, OSError) as error:
+        logging.getLogger(__name__).warning("安装事务等待恢复：%s", error)
     ensure_index(database)
     write_token = secrets.token_urlsafe(32)
 
@@ -260,6 +287,43 @@ def create_app(db_path: str | Path | None = None, *, remote_token: str | None = 
                     versionStatus=upstream.previous(item, source), libraryRevision=annotations["revision"])
         item["confidenceLabel"] = CONFIDENCE_LABEL.get(item["provenance"]["confidence"], "")
         return item
+
+    @app.exception_handler(MaintenanceError)
+    async def operation_error(_request: Request, error: MaintenanceError):
+        return JSONResponse({"detail": str(error)}, status_code=error.status)
+
+    def run_operation(fn, *args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except OSError as error:
+            raise HTTPException(409, "操作未完成，请检查安装目录、可用空间和写入权限") from error
+
+    def fresh_item(key: str):
+        refresh_if_stale(database, force=True)
+        conn = with_conn()
+        try:
+            return index_mod.get_skill(conn, key)
+        finally:
+            conn.close()
+
+    @app.get("/api/maintenance/roots")
+    def install_roots():
+        return {"items": [{"path": str(path), "label": label} for path, label in placements.stores().items()]}
+
+    @app.post("/api/maintenance/install-preview")
+    def install_preview(action: InstallPreview):
+        return run_operation(maintenance.preview, "install", **action.model_dump())
+
+    @app.post("/api/maintenance/placement-preview")
+    def placement_preview(action: PlacementPreview):
+        return run_operation(maintenance.preview, action.action, item=fresh_item(action.identity_key), entry=action.entry)
+
+    @app.post("/api/maintenance/confirm")
+    def confirm(action: Confirmation):
+        result = run_operation(maintenance.apply, action.id, fresh_item,
+                               accept_license=action.accept_license, accept_local=action.accept_local)
+        refresh_if_stale(database, force=True)
+        return result
 
     @app.get("/api/library")
     def user_library():
@@ -532,6 +596,8 @@ def create_app(db_path: str | Path | None = None, *, remote_token: str | None = 
         frontmatter, markdown_body = split_frontmatter(body)
         skill["frontmatter"] = frontmatter
         skill["html"] = render(markdown_body)
+        for placement in skill["placements"]:
+            placement["actions"], placement["managementNote"] = placements.inspect(skill, placement)
         return decorate(skill, annotations)
 
     if FRONTEND_DIST.is_dir():

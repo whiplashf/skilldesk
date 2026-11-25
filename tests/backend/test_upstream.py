@@ -442,3 +442,19 @@ class TestQuotaReporting:
         monkeypatch.setattr(upstream, "http_client", lambda **kw: FakeHTTP({}, status=500))
         result = upstream.quota()
         assert result["available"] is False and result["detail"]
+
+
+def test_reinstall_uses_the_new_install_fingerprint(skill):
+    upstream.evaluate(skill, source_for(skill), Recorder(trees={"skills/alpha": "t" * 40}))
+    (skill["_path"] / "SKILL.md").write_text("A newly installed version.")
+    tree = upstream._local_tree(skill["_path"])
+    result = upstream.evaluate(skill, source_for(skill, tree=tree), Recorder(trees={"skills/alpha": tree}), fresh=True)
+    assert result["status"] == "current" and not result["localModified"]
+
+
+def test_truncated_tree_falls_back_for_pinned_head():
+    def get(path, params):
+        assert path == "contents/skills" and params == {"ref": HEAD}
+        return [{"name": "alpha", "type": "dir", "sha": "folder-tree"}]
+
+    assert upstream._dir_sha_at(HEAD, "skills/alpha", get, {"head": HEAD, "repo": REPO}) == "folder-tree"

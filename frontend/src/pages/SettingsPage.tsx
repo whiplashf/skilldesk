@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { TranslationSettings } from '../components/TranslationSettings';
+import { RepositoryInstall } from '../components/RepositoryInstall';
 import { ProjectSettings } from '../components/ProjectSettings';
 import type { Health, RootsResponse, UpstreamQuota } from '../api/types';
 import { api } from '../api/endpoints';
@@ -166,12 +167,14 @@ function UpstreamQuotaBlock() {
 export function SettingsPage({ health, onRetryHealth }: SettingsPageProps) {
   const roots = useApi<RootsResponse>((signal) => api.roots(signal), []);
   const [showQuota, setShowQuota] = useState(false);
+  const [projectGeneration, setProjectGeneration] = useState(0);
 
   return (
     <div className="page">
       <PageHeader title="设置" sub="管理本机扫描范围和阅读时使用的翻译服务。" />
 
-      <ProjectSettings onChange={() => { roots.reload(); onRetryHealth(); }} />
+      <ProjectSettings onChange={() => { setProjectGeneration(n => n + 1); roots.reload(); onRetryHealth(); }} />
+      <RepositoryInstall generation={projectGeneration} onChange={() => { roots.reload(); onRetryHealth(); }} />
       <TranslationSettings />
       <section className="block">
         <h2 className="block-title">宿主根</h2>
