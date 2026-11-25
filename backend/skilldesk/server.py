@@ -380,11 +380,11 @@ def create_app(db_path: str | Path | None = None, *, remote_token: str | None = 
             rows = index_mod.list_skills(conn, limit=1000)["items"]
         finally:
             conn.close()
-        installed = {
-            (item["provenance"]["repo"].lower(), item["provenance"]["path"])
-            for item in rows
-            if item["provenance"]["repo"]
-        }
+        installed: dict[tuple[str, str], str] = {}
+        for item in rows:
+            repo = item["provenance"]["repo"].lower()
+            if repo:
+                installed[(repo, item["provenance"]["path"])] = item["identity_key"]
         payload = registry.entries()
         items = []
         for entry in payload["entries"]:
@@ -394,6 +394,7 @@ def create_app(db_path: str | Path | None = None, *, remote_token: str | None = 
                 {
                     **entry,
                     "state": "installed" if key in installed else ("registered" if cached.is_file() else "available"),
+                    "identityKey": installed.get(key, ""),
                     "cached": str(cached) if cached.is_file() else "",
                 }
             )

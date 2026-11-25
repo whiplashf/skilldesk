@@ -404,3 +404,5 @@ kbd {
 .dialog-checks { display: flex; flex-direction: column; gap: 6px; margin: 12px 0 0; font-size: 13px; }
 .dialog-checks label { display: flex; gap: 8px; align-items: center; }
 .dialog-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+
+.discover-filter { display: flex; gap: 6px; margin: 4px 0 12px; }

@@ -43,6 +43,7 @@ export interface RegistryEntry {
   source: string;
   state: 'installed' | 'registered' | 'available';
   cached: string;
+  identityKey: string;
 }
 export interface RegistryResponse {
   sources: RegistrySource[];

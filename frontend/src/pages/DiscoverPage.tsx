@@ -70,14 +70,18 @@ function RegistryGroup({
   repo,
   entries,
   busy,
+  versions,
   onPreview,
   onRegister,
+  onCheck,
 }: {
   repo: string;
   entries: RegistryEntry[];
   busy: string;
+  versions: Record<string, string>;
   onPreview: (entry: RegistryEntry) => void;
   onRegister: (entry: RegistryEntry) => void;
+  onCheck: (entry: RegistryEntry) => void;
 }) {
   return (
     <section className="block">
@@ -98,23 +102,53 @@ function RegistryGroup({
               </div>
               {entry.description ? <p className="registry-desc">{entry.description}</p> : null}
               <div className="registry-actions">
-                <button
-                  type="button"
-                  className="button button--small"
-                  disabled={running}
-                  onClick={() => onPreview(entry)}
-                >
-                  {running ? '预览中…' : '预览并安装'}
-                </button>
-                <button
-                  type="button"
-                  className="button button--small button--ghost"
-                  disabled={running || entry.state !== 'available'}
-                  title="只缓存 SKILL.md 到本地，便于先阅读再决定是否安装"
-                  onClick={() => onRegister(entry)}
-                >
-                  登记正文
-                </button>
+                {entry.state === 'installed' ? (
+                  <>
+                    <button
+                      type="button"
+                      className="button button--small"
+                      disabled={running || entry.identityKey === ''}
+                      title="用本机安装基线对比上游当前目录"
+                      onClick={() => onCheck(entry)}
+                    >
+                      {running ? '检查中…' : '检查上游版本'}
+                    </button>
+                    <button
+                      type="button"
+                      className="button button--small button--ghost"
+                      disabled={running}
+                      title="用清单里的上游版本重新安装（会覆盖现有副本）"
+                      onClick={() => onPreview(entry)}
+                    >
+                      覆盖重装
+                    </button>
+                    {versions[entry.identityKey] ? (
+                      <span className="chip chip--tag" title="版本检查结果">
+                        {versions[entry.identityKey]}
+                      </span>
+                    ) : null}
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className="button button--small"
+                      disabled={running}
+                      onClick={() => onPreview(entry)}
+                    >
+                      {running ? '预览中…' : '预览并安装'}
+                    </button>
+                    <button
+                      type="button"
+                      className="button button--small button--ghost"
+                      disabled={running || entry.state !== 'available'}
+                      title="只缓存 SKILL.md 到本地，便于先阅读再决定是否安装"
+                      onClick={() => onRegister(entry)}
+                    >
+                      登记正文
+                    </button>
+                  </>
+                )}
               </div>
             </li>
           );
@@ -122,6 +156,20 @@ function RegistryGroup({
       </ul>
     </section>
   );
+}
+
+type StateFilter = 'installable' | 'installed' | 'all';
+
+const STATE_FILTERS: ReadonlyArray<{ id: StateFilter; label: string }> = [
+  { id: 'installable', label: '可引入' },
+  { id: 'installed', label: '已安装' },
+  { id: 'all', label: '全部' },
+];
+
+function matchesFilter(entry: RegistryEntry, filter: StateFilter): boolean {
+  if (filter === 'all') return true;
+  if (filter === 'installed') return entry.state === 'installed';
+  return entry.state !== 'installed';
 }
 
 export function DiscoverPage({ onInstalled }: DiscoverPageProps) {
@@ -132,9 +180,20 @@ export function DiscoverPage({ onInstalled }: DiscoverPageProps) {
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [plan, setPlan] = useState<InstallPlan | null>(null);
+  const [filter, setFilter] = useState<StateFilter>('installable');
+  const [versions, setVersions] = useState<Record<string, string>>({});
+
+  const allEntries = registry.state.status === 'ready' ? registry.state.data.entries : [];
+  const counts = {
+    installable: allEntries.filter((entry) => matchesFilter(entry, 'installable')).length,
+    installed: allEntries.filter((entry) => entry.state === 'installed').length,
+    all: allEntries.length,
+  };
 
   const groups = useMemo(() => {
-    const items = registry.state.status === 'ready' ? registry.state.data.entries : [];
+    const items = (registry.state.status === 'ready' ? registry.state.data.entries : []).filter((entry) =>
+      matchesFilter(entry, filter),
+    );
     const byRepo = new Map<string, RegistryEntry[]>();
     for (const entry of items) {
       const key = `${entry.host}/${entry.repo}`;
@@ -143,7 +202,7 @@ export function DiscoverPage({ onInstalled }: DiscoverPageProps) {
       byRepo.set(key, bucket);
     }
     return [...byRepo.entries()].sort((left, right) => left[0].localeCompare(right[0]));
-  }, [registry.state]);
+  }, [registry.state, filter]);
 
   const parsed = parseSource(input, pathInput);
 
@@ -152,6 +211,30 @@ export function DiscoverPage({ onInstalled }: DiscoverPageProps) {
     setError('');
     try {
       setPlan(await api.planInstall(target));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function checkInstalled(entry: RegistryEntry) {
+    if (!entry.identityKey) return;
+    setBusy(`${entry.host}:${entry.repo}@${entry.path}`);
+    setError('');
+    try {
+      const status = await api.checkVersion(entry.identityKey, true);
+      const label =
+        status.status === 'release'
+          ? `有新版本${status.latest ? ` · ${status.latest}` : ''}`
+          : status.status === 'changed'
+            ? '上游内容有变化'
+            : status.status === 'current'
+              ? '已是最新'
+              : status.status === 'baseline'
+                ? '已记录基线'
+                : '待确认版本';
+      setVersions((current) => ({ ...current, [entry.identityKey]: label }));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -177,7 +260,7 @@ export function DiscoverPage({ onInstalled }: DiscoverPageProps) {
     <div className="page">
       <PageHeader
         title="发现"
-        sub="从已配置的清单或任意 GitHub 仓库安装 skill。安装前一定会先给出预览（文件清单、许可证、脚本）。"
+        sub="把还没有的 skill 引进来：从清单或任意 GitHub 仓库安装，安装前先给出预览（文件清单、许可证、脚本）。已安装的在这里只用于检查上游版本和覆盖重装。"
         aside={
           <button type="button" className="button button--ghost" onClick={registry.reload}>
             刷新清单
@@ -243,6 +326,20 @@ export function DiscoverPage({ onInstalled }: DiscoverPageProps) {
         </p>
       ) : null}
 
+      <div className="discover-filter" role="group" aria-label="按状态筛选">
+        {STATE_FILTERS.map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            className={filter === option.id ? 'chip chip--active' : 'chip'}
+            aria-pressed={filter === option.id}
+            onClick={() => setFilter(option.id)}
+          >
+            {option.label} {formatCount(counts[option.id])}
+          </button>
+        ))}
+      </div>
+
       {registry.state.status === 'loading' ? (
         <section className="block">
           <Skeleton width="180px" height={20} />
@@ -259,7 +356,11 @@ export function DiscoverPage({ onInstalled }: DiscoverPageProps) {
             </p>
           ))}
           {groups.length === 0 ? (
-            <p className="block-note">清单里还没有条目。可以在上面粘贴链接，或在设置里添加清单文件。</p>
+            <p className="block-note">
+              {filter === 'installable'
+                ? '清单里的条目本机都已经装了。切到「已安装」可检查上游版本，或在上面粘贴新链接。'
+                : '清单里还没有条目。可以在上面粘贴链接，或在设置里添加清单文件。'}
+            </p>
           ) : (
             groups.map(([repo, entries]) => (
               <RegistryGroup
@@ -267,8 +368,10 @@ export function DiscoverPage({ onInstalled }: DiscoverPageProps) {
                 repo={repo}
                 entries={entries}
                 busy={busy}
+                versions={versions}
                 onPreview={(entry) => void preview({ host: entry.host, repo: entry.repo, path: entry.path })}
                 onRegister={(entry) => void register({ host: entry.host, repo: entry.repo, path: entry.path })}
+                onCheck={(entry) => void checkInstalled(entry)}
               />
             ))
           )}
