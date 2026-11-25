@@ -10,11 +10,10 @@ import time
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote
 
-import httpx
-
 from .config import cache_dir
 from .library import read_json, write_json
 from .markdown import split_frontmatter
+from .net import http_client
 from .scan import read_body
 
 REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -208,7 +207,7 @@ def check(item: dict, source: dict, force: bool = False) -> dict:
         headers["Authorization"] = "Bearer " + token
     base = "https://api.github.com/repos/" + source["repo"]
     memo = {}
-    with httpx.Client(headers=headers, timeout=12) as client:
+    with http_client(headers=headers, timeout=12, url_hint=base) as client:
 
         def get(endpoint, params):
             key = (endpoint, tuple(params.items()))

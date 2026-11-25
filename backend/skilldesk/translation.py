@@ -14,6 +14,7 @@ import httpx
 
 from .config import cache_dir, config_dir
 from .library import read_json, write_json
+from .net import http_client
 
 SETTINGS = "ai.json"
 # Keep URLs and path-like tokens verbatim, including bare SKILL.md references.
@@ -164,7 +165,7 @@ def translate(rendered: str) -> dict:
     translated: list[str] = []
     batch: list[str] = []
     length = 0
-    with httpx.Client(timeout=70) as client:
+    with http_client(timeout=70, url_hint=settings["baseUrl"]) as client:
         for source in prose.strings:
             if batch and (length + len(source) > 5000 or len(batch) == 40):
                 translated.extend(_translate_batch(client, settings, batch))
