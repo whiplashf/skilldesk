@@ -8,6 +8,7 @@ import { HASH, isLibrarySurface, navigate, skillHash, useHashRoute, type Library
 import { focusSearch } from './lib/searchFocus';
 import { useThemePref } from './lib/theme';
 import { useApi } from './lib/useApi';
+import { DiscoverPage } from './pages/DiscoverPage';
 import { LibraryPage } from './pages/LibraryPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { TrackingPage } from './pages/TrackingPage';
@@ -71,6 +72,8 @@ export function App() {
           />
         ) : route.name === 'tracking' ? (
           <TrackingPage health={health.state} onRetryHealth={health.reload} onOpenSkill={openSkill} />
+        ) : route.name === 'discover' ? (
+          <DiscoverPage onInstalled={health.reload} />
         ) : route.name === 'settings' ? (
           <SettingsPage health={health.state} onRetryHealth={health.reload} />
         ) : (

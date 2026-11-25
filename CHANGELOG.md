@@ -2,6 +2,13 @@
 
 ## 未发布 · 本机技能库
 
+- **M3 发现与导入**：新增「发现」页与 `registry/` 清单（只存坐标与许可证，不含正文）。
+  - 清单：内置 `registry/default.json` + 可在设置里增删/开关的文件型来源；条目按仓库分组，状态分「已安装 / 已登记正文 / 未安装」。
+  - 两条入口：粘贴 `owner/repo`、GitHub URL 或 `/tree/<branch>/<dir>` 链接直接预览；或在清单里点条目。
+  - 两阶段安装：`POST /api/registry/plan` 先给出**预览**（精确文件清单、总体积、许可证、脚本清单、目标路径、软链目标、警告），`POST /api/registry/install` 校验上游提交未变后才会落盘；计划 10 分钟过期。
+  - 安装写入 `~/.agents/skills/<name>`、登记 `~/.agents/.skill-lock.json`、给 claude/opencode 建软链、并**顺手记录安装基线**（所以装完马上就能判断版本）；目标已存在需显式"覆盖"，许可证无法识别需显式确认，脚本只列清单从不执行。
+  - 登记正文：只把 SKILL.md 抓到 `~/.cache/skilldesk/vendor/…` 便于先读后装。
+  - 实测（独立 HOME 里跑真仓库）：`QingYunA/answer-me-with-html` 预览 6 文件/1.2 MB/MIT/含 1 个脚本，安装 0.7s 落盘 + lockfile + 软链 + 基线（dirTree 与本地一致），重复安装被 409 拦下。
 - 「可修复」不再是空标签：新增 `POST /api/issues/{id}/fix` 与跟踪页的 **修复 / 移除** 按钮。悬空软链优先重指到同名实体副本（store 优先），没有副本时可移除死链；非机械性问题（待认领来源、重复实体）明确拒绝并指向详情页的人工处理。修复后会重扫索引并回传最新计数，安全边界是：只动已登记宿主根里的软链、失败不触碰原链接。本机实测一次性修好 24 条历史遗留死链：悬空 24 → 0，落点 380 → 404（这 24 个 skill 现在对 Claude Code 也可用），问题总数 67 → 43。
 - 版本检查不再被匿名配额卡死：凭据按 环境变量 `SKILLDESK_GITHUB_TOKEN` → `~/.config/skilldesk/upstream.json` 的 `{"githubToken": ...}` → 已登录的 `gh` CLI 依次解析（本机实测自动复用 gh 的 token，额度 60 → **5000 次/小时**）。新增 `GET /api/upstream/quota`，设置页「GitHub 检查」显示凭据来源、剩余额度与重置时间；额度用尽的 429 会直接写出恢复时间。另修一处误导：检查失败时不再把上一次的「已是最新」当成本次结果展示，而是标成「上次检查结果」。
 - 版本检查有了真正的**安装基线**：新增 `backend/skilldesk/baselines.py`，首次检查时记录上游目录的 git tree SHA 与本地目录指纹（存 `~/.local/state/skilldesk/baselines.json`，删掉只丢历史不丢数据）。之后每次检查即可回答两件事：上游目录有没有变、本地副本有没有被手改（`localModified`，详情里会附一句说明）。

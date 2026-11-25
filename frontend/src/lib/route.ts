@@ -4,12 +4,14 @@ export type Route =
   | { name: 'library' }
   | { name: 'skill'; identityKey: string }
   | { name: 'tracking' }
+  | { name: 'discover' }
   | { name: 'settings' }
   | { name: 'notFound'; raw: string };
 
 export const HASH = {
   library: '#/library',
   tracking: '#/tracking/health',
+  discover: '#/discover',
   settings: '#/settings',
 } as const;
 
@@ -87,6 +89,9 @@ function parseRoute(hash: string): Route {
   }
   if (head === 'tracking') {
     return { name: 'tracking' };
+  }
+  if (head === 'discover') {
+    return { name: 'discover' };
   }
   if (head === 'settings') {
     return { name: 'settings' };

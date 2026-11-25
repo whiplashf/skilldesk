@@ -1,0 +1,46 @@
+{
+  "entries": [
+    {
+      "host": "github.com",
+      "repo": "Nutlope/hallmark",
+      "path": "skills/hallmark/SKILL.md",
+      "license": "MIT",
+      "description": "反 AI 味道的界面设计评审关（hallmark）"
+    },
+    {
+      "host": "github.com",
+      "repo": "zarazhangrui/frontend-slides",
+      "path": "SKILL.md",
+      "license": "MIT",
+      "description": "带导出 PPT 能力的 HTML 演示文稿生成"
+    },
+    {
+      "host": "github.com",
+      "repo": "ConardLi/garden-skills",
+      "path": "skills/web-design-engineer/SKILL.md",
+      "license": "MIT",
+      "description": "网页/看板/原型的设计与实现流程"
+    },
+    {
+      "host": "github.com",
+      "repo": "GoogleChrome/modern-web-guidance",
+      "path": "skills/modern-web-guidance/SKILL.md",
+      "license": "",
+      "description": "现代 Web 平台特性与最佳实践的检索工具"
+    },
+    {
+      "host": "github.com",
+      "repo": "mattpocock/skills",
+      "path": "skills/productivity/grilling/SKILL.md",
+      "license": "",
+      "description": "把方案按设计树逐轮拷问，直到双方理解一致"
+    },
+    {
+      "host": "github.com",
+      "repo": "QingYunA/answer-me-with-html",
+      "path": "skills/answer-me-with-html/SKILL.md",
+      "license": "",
+      "description": "把复杂回答渲染成一张自包含的 HTML 说明页"
+    }
+  ]
+}

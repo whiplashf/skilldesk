@@ -26,6 +26,59 @@ export interface VersionStatus {
   url: string;
   detail: string;
 }
+export interface RegistrySource {
+  id: string;
+  kind: 'builtin' | 'file';
+  label: string;
+  path: string;
+  enabled: boolean;
+}
+export interface RegistryEntry {
+  host: string;
+  repo: string;
+  path: string;
+  license: string;
+  description: string;
+  branch: string;
+  source: string;
+  state: 'installed' | 'registered' | 'available';
+  cached: string;
+}
+export interface RegistryResponse {
+  sources: RegistrySource[];
+  entries: RegistryEntry[];
+  errors: { source: string; error: string; path: string }[];
+}
+export interface InstallPlan {
+  planId: string;
+  host: string;
+  repo: string;
+  path: string;
+  name: string;
+  commit: string;
+  license: string;
+  files: { path: string; size: number; mode: number }[];
+  scripts: string[];
+  totalBytes: number;
+  target: string;
+  store: string;
+  links: string[];
+  warnings: string[];
+  expiresAt: number;
+}
+export interface InstallResult {
+  installed: boolean;
+  name: string;
+  target: string;
+  commit: string;
+  license: string;
+  files: number;
+  scripts: string[];
+  links: string[];
+  lockfile: string;
+  identity_key: string;
+  counts: { skills: number; placements: number; issues: number };
+}
 export interface UpstreamQuota {
   available: boolean;
   mode: 'token' | 'anonymous';

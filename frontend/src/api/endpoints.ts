@@ -1,5 +1,5 @@
 import { getJson, withQuery, writeJson } from './client';
-import type { AISettings, AssetChanges, SkillSummary, UpstreamQuota, VersionStatus } from './types';
+import type { AISettings, AssetChanges, InstallPlan, InstallResult, RegistryResponse, SkillSummary, UpstreamQuota, VersionStatus } from './types';
 import type {
   Facets,
   FileContent,
@@ -44,6 +44,19 @@ export const api = {
   fixIssue: (id: string, action: 'auto' | 'remove' = 'auto') =>
     writeJson<{ fixed: boolean; action: string; entry: string; target?: string }>(
       '/api/issues/' + encodeURIComponent(id) + '/fix', 'POST', { action }),
+  registry: (signal: AbortSignal) => getJson<RegistryResponse>('/api/registry', signal),
+  addRegistrySource: (path: string) => writeJson<{ registry: RegistryResponse }>('/api/registry/sources', 'POST', { path }),
+  removeRegistrySource: (id: string) => writeJson<RegistryResponse>('/api/registry/sources/' + encodeURIComponent(id), 'DELETE', {}),
+  toggleRegistrySource: (id: string, enabled: boolean) =>
+    writeJson<RegistryResponse>('/api/registry/sources/' + encodeURIComponent(id) + '/enabled', 'POST', { enabled }),
+  addRegistryEntry: (body: { host?: string; repo: string; path: string; description?: string }) =>
+    writeJson<RegistryResponse>('/api/registry/entry', 'POST', body),
+  planInstall: (body: { host?: string; repo: string; path: string; refresh?: boolean }) =>
+    writeJson<InstallPlan>('/api/registry/plan', 'POST', body),
+  installPlan: (planId: string, options: { force?: boolean; acknowledgeLicense?: boolean } = {}) =>
+    writeJson<InstallResult>('/api/registry/install', 'POST', { planId, ...options }),
+  importEntry: (body: { host?: string; repo: string; path: string; refresh?: boolean }) =>
+    writeJson<{ imported: boolean; cached: string; bytes: number }>('/api/registry/import', 'POST', body),
   aiSettings: (signal: AbortSignal) => getJson<AISettings>('/api/settings/ai', signal),
   upstreamQuota: (signal: AbortSignal) => getJson<UpstreamQuota>('/api/upstream/quota', signal),
   saveAI: (body: {baseUrl: string; model: string; apiKey?: string}) => writeJson<AISettings>('/api/settings/ai', 'PUT', body),

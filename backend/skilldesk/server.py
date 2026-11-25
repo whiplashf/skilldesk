@@ -21,7 +21,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
-from . import __version__, library, translation, upstream
+from . import __version__, installer, library, registry, translation, upstream
 from . import index as index_mod
 from .config import config_path, index_path, load_config
 from .health import KINDS as HEALTH_KINDS
@@ -373,6 +373,113 @@ def create_app(db_path: str | Path | None = None, *, remote_token: str | None = 
             return {**result, "counts": index_mod.counts(conn)}
         finally:
             conn.close()
+
+    def registry_view() -> dict:
+        conn = with_conn()
+        try:
+            rows = index_mod.list_skills(conn, limit=1000)["items"]
+        finally:
+            conn.close()
+        installed = {
+            (item["provenance"]["repo"].lower(), item["provenance"]["path"])
+            for item in rows
+            if item["provenance"]["repo"]
+        }
+        payload = registry.entries()
+        items = []
+        for entry in payload["entries"]:
+            key = (entry["repo"].lower(), entry["path"])
+            cached = installer.vendor_path(entry["host"], entry["repo"], entry["path"])
+            items.append(
+                {
+                    **entry,
+                    "state": "installed" if key in installed else ("registered" if cached.is_file() else "available"),
+                    "cached": str(cached) if cached.is_file() else "",
+                }
+            )
+        return {"sources": registry.sources(), "entries": items, "errors": payload["errors"]}
+
+    @app.get("/api/registry")
+    def api_registry() -> dict:
+        return registry_view()
+
+    @app.post("/api/registry/sources")
+    async def api_add_registry_source(request: Request) -> dict:
+        body = await request.json()
+        path = str((body or {}).get("path") or "").strip()
+        if not path:
+            raise HTTPException(400, "需要提供清单文件路径")
+        added = registry.add_source(path, str((body or {}).get("label") or ""))
+        return {"source": added, "registry": registry_view()}
+
+    @app.delete("/api/registry/sources/{source_id}")
+    def api_remove_registry_source(source_id: str) -> dict:
+        if not registry.remove_source(source_id):
+            raise HTTPException(404, "找不到这个来源")
+        return registry_view()
+
+    @app.post("/api/registry/sources/{source_id}/enabled")
+    async def api_toggle_registry_source(source_id: str, request: Request) -> dict:
+        body = await request.json()
+        if not registry.set_enabled(source_id, bool((body or {}).get("enabled"))):
+            raise HTTPException(404, "找不到这个来源")
+        return registry_view()
+
+    @app.post("/api/registry/entry")
+    async def api_add_registry_entry(request: Request) -> dict:
+        body = await request.json()
+        entry = registry.normalise(body if isinstance(body, dict) else {})
+        if entry is None:
+            raise HTTPException(400, "请填写合法的 host / owner-repo / SKILL.md 路径")
+        registry.save_entry(entry)
+        return registry_view()
+
+    @app.post("/api/registry/plan")
+    async def api_registry_plan(request: Request) -> dict:
+        body = await request.json()
+        try:
+            return installer.plan(
+                str((body or {}).get("host") or "github.com"),
+                str((body or {}).get("repo") or ""),
+                str((body or {}).get("path") or ""),
+                refresh=bool((body or {}).get("refresh")),
+            )
+        except installer.InstallError as error:
+            raise HTTPException(error.status, error.message) from error
+
+    @app.post("/api/registry/install")
+    async def api_registry_install(request: Request) -> dict:
+        body = await request.json()
+        plan_id = str((body or {}).get("planId") or "")
+        if not plan_id:
+            raise HTTPException(400, "需要 planId")
+        try:
+            result = installer.apply(
+                plan_id,
+                force=bool((body or {}).get("force")),
+                acknowledge_license=bool((body or {}).get("acknowledgeLicense")),
+            )
+        except installer.InstallError as error:
+            raise HTTPException(error.status, error.message) from error
+        rebuild_index(database)
+        conn = with_conn()
+        try:
+            return {**result, "counts": index_mod.counts(conn)}
+        finally:
+            conn.close()
+
+    @app.post("/api/registry/import")
+    async def api_registry_import(request: Request) -> dict:
+        body = await request.json()
+        try:
+            return installer.import_only(
+                str((body or {}).get("host") or "github.com"),
+                str((body or {}).get("repo") or ""),
+                str((body or {}).get("path") or ""),
+                refresh=bool((body or {}).get("refresh")),
+            )
+        except installer.InstallError as error:
+            raise HTTPException(error.status, error.message) from error
 
     @app.get("/api/upstream/quota")
     def upstream_quota() -> dict:

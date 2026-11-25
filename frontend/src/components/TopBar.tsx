@@ -15,6 +15,7 @@ export interface TopBarProps {
 
 const TABS: ReadonlyArray<{ hash: string; label: string; matches: ReadonlyArray<Route['name']> }> = [
   { hash: HASH.library, label: '本机技能库', matches: ['library', 'skill'] },
+  { hash: HASH.discover, label: '发现', matches: ['discover'] },
   { hash: HASH.tracking, label: '安装健康', matches: ['tracking'] },
   { hash: HASH.settings, label: '设置', matches: ['settings'] },
 ];
