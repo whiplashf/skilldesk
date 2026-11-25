@@ -147,3 +147,19 @@ class TestLoadLockfile:
 
         write_lockfile(fake_home, {"alpha": lock_entry("owner/repo", "skills/alpha/SKILL.md"), "broken": None})  # type: ignore[dict-item]
         assert set(load_lockfile()) == {"alpha"}
+
+
+class TestLockfileSourceFallback:
+    def test_unusable_source_url_falls_back_to_source(self, fake_home: Path) -> None:
+        """The lockfile may carry a local path in sourceUrl; ``source`` still names the repo."""
+        from helpers import lock_entry, write_lockfile, write_skill
+
+        directory = write_skill(fake_home / ".agents" / "skills", "alpha")
+        entry = lock_entry("acme/pack", "skills/alpha/SKILL.md")
+        entry["sourceUrl"] = "/tmp/some/local/checkout"
+        write_lockfile(fake_home, {"alpha": entry})
+
+        provenance = infer_provenance("alpha", str(directory), {"name": "alpha"}, {"alpha": entry})
+        assert provenance.confidence == RECORDED
+        assert (provenance.host, provenance.repo) == ("github.com", "acme/pack")
+        assert provenance.path == "skills/alpha/SKILL.md"

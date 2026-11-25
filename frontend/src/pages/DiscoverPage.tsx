@@ -1,11 +1,13 @@
 import { useMemo, useState } from 'react';
-import type { InstallPlan, RegistryEntry, RegistryResponse } from '../api/types';
+import type { InstallPlan, RegistryEntry, RegistryResponse, UpdatePlan } from '../api/types';
 import { api } from '../api/endpoints';
 import { Badge } from '../components/Badge';
 import { ErrorState } from '../components/ErrorState';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { InstallDialog } from '../components/InstallDialog';
 import { PageHeader } from '../components/PageHeader';
 import { Skeleton } from '../components/Skeleton';
+import { UpdateDialog } from '../components/UpdateDialog';
 import { formatCount } from '../lib/format';
 import { useApi } from '../lib/useApi';
 
@@ -74,14 +76,18 @@ function RegistryGroup({
   onPreview,
   onRegister,
   onCheck,
+  onUpdate,
+  onUninstall,
 }: {
   repo: string;
   entries: RegistryEntry[];
   busy: string;
-  versions: Record<string, string>;
+  versions: Record<string, { label: string; updatable: boolean }>;
   onPreview: (entry: RegistryEntry) => void;
   onRegister: (entry: RegistryEntry) => void;
   onCheck: (entry: RegistryEntry) => void;
+  onUpdate: (entry: RegistryEntry) => void;
+  onUninstall: (entry: RegistryEntry) => void;
 }) {
   return (
     <section className="block">
@@ -124,9 +130,23 @@ function RegistryGroup({
                     </button>
                     {versions[entry.identityKey] ? (
                       <span className="chip chip--tag" title="版本检查结果">
-                        {versions[entry.identityKey]}
+                        {versions[entry.identityKey]?.label}
                       </span>
                     ) : null}
+                    {versions[entry.identityKey]?.updatable ? (
+                      <button type="button" className="button button--small" disabled={running} onClick={() => onUpdate(entry)}>
+                        升级
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="button button--small button--ghost"
+                      disabled={running}
+                      title="从本机移除这个 skill（含软链与安装记录）"
+                      onClick={() => onUninstall(entry)}
+                    >
+                      卸载
+                    </button>
                   </>
                 ) : (
                   <>
@@ -181,7 +201,9 @@ export function DiscoverPage({ onInstalled }: DiscoverPageProps) {
   const [error, setError] = useState('');
   const [plan, setPlan] = useState<InstallPlan | null>(null);
   const [filter, setFilter] = useState<StateFilter>('installable');
-  const [versions, setVersions] = useState<Record<string, string>>({});
+  const [versions, setVersions] = useState<Record<string, { label: string; updatable: boolean }>>({});
+  const [updateTarget, setUpdateTarget] = useState<{ plan: UpdatePlan; identityKey: string } | null>(null);
+  const [uninstallTarget, setUninstallTarget] = useState<RegistryEntry | null>(null);
 
   const allEntries = registry.state.status === 'ready' ? registry.state.data.entries : [];
   const counts = {
@@ -234,7 +256,25 @@ export function DiscoverPage({ onInstalled }: DiscoverPageProps) {
               : status.status === 'baseline'
                 ? '已记录基线'
                 : '待确认版本';
-      setVersions((current) => ({ ...current, [entry.identityKey]: label }));
+      setVersions((current) => ({
+        ...current,
+        [entry.identityKey]: {
+          label,
+          updatable: status.status === 'release' || status.status === 'changed',
+        },
+      }));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function startUpdate(entry: RegistryEntry) {
+    setBusy(`${entry.host}:${entry.repo}@${entry.path}`);
+    setError('');
+    try {
+      setUpdateTarget({ plan: await api.planUpdate(entry.identityKey, true), identityKey: entry.identityKey });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -260,7 +300,7 @@ export function DiscoverPage({ onInstalled }: DiscoverPageProps) {
     <div className="page">
       <PageHeader
         title="发现"
-        sub="把还没有的 skill 引进来：从清单或任意 GitHub 仓库安装，安装前先给出预览（文件清单、许可证、脚本）。已安装的在这里只用于检查上游版本和覆盖重装。"
+        sub="把还没有的 skill 引进来：从清单或任意 GitHub 仓库安装，安装前先给出预览（文件清单、许可证、脚本）。已安装的在这里检查上游版本、一键升级（先看 diff、旧版本自动备份）或卸载。"
         aside={
           <button type="button" className="button button--ghost" onClick={registry.reload}>
             刷新清单
@@ -372,11 +412,50 @@ export function DiscoverPage({ onInstalled }: DiscoverPageProps) {
                 onPreview={(entry) => void preview({ host: entry.host, repo: entry.repo, path: entry.path })}
                 onRegister={(entry) => void register({ host: entry.host, repo: entry.repo, path: entry.path })}
                 onCheck={(entry) => void checkInstalled(entry)}
+                onUpdate={(entry) => void startUpdate(entry)}
+                onUninstall={(entry) => setUninstallTarget(entry)}
               />
             ))
           )}
         </>
       )}
+
+      {updateTarget ? (
+        <UpdateDialog
+          plan={updateTarget.plan}
+          identityKey={updateTarget.identityKey}
+          onClose={() => setUpdateTarget(null)}
+          onDone={async (message) => {
+            setUpdateTarget(null);
+            setNotice(message);
+            registry.reload();
+            onInstalled();
+            setVersions({});
+          }}
+        />
+      ) : null}
+
+      {uninstallTarget ? (
+        <ConfirmDialog
+          title={`卸载 ${skillName(uninstallTarget)}`}
+          lines={[
+            `将删除实体目录 ${uninstallTarget.repo} 的本机副本`,
+            '同时移除 claude / opencode 目录里的软链',
+            '并删除 ~/.agents/.skill-lock.json 里的安装记录与安装基线',
+            '这些操作不能撤销（可在备份目录里找到升级前的旧版本）',
+          ]}
+          confirmLabel="确认卸载"
+          onCancel={() => setUninstallTarget(null)}
+          onConfirm={async () => {
+            const result = await api.uninstall(uninstallTarget.identityKey);
+            setUninstallTarget(null);
+            setNotice(`已卸载 ${result.name}：目录 ${result.removedFolder ? '已删除' : '未存在'}，软链 ${result.removedLinks.length} 个`);
+            registry.reload();
+            onInstalled();
+            setVersions({});
+          }}
+        />
+      ) : null}
 
       {plan ? (
         <InstallDialog

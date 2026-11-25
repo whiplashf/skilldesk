@@ -406,3 +406,10 @@ kbd {
 .dialog-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 
 .discover-filter { display: flex; gap: 6px; margin: 4px 0 12px; }
+
+.dialog--narrow { width: min(520px, 100%); }
+.update-group { margin-top: 10px; }
+.update-group-title { font-size: 12px; font-weight: 600; letter-spacing: 0.02em; }
+.update-group--added .update-group-title { color: var(--accent); }
+.update-group--updated .update-group-title { color: var(--warn, #a1620a); }
+.update-group--removed .update-group-title { color: var(--ink-2); text-decoration: line-through; }

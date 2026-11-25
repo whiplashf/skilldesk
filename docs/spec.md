@@ -258,3 +258,5 @@ pyproject.toml                 # uv 管理
 - **索引自动重建**：`/api/health` 返回前会按 mtime 判断过期并重建（3 秒节流），`rescanned` 字段告知调用方；因此不需要"刷新数据"这类会写盘的按钮。
 - **M3 落地**（发现与导入）：Registry 只存坐标 + 许可证，正文一律运行时拉取（与 ADR-0004 一致）；安装走 `plan → install` 两阶段，计划绑定上游提交、10 分钟过期，落地前用 `git ls-remote` 复核上游未移动。安装动作会写三样东西：实体目录、`~/.agents/.skill-lock.json` 条目、以及安装基线（`dirTree` 取自 `git rev-parse HEAD:<dir>`），所以"装上即可判版本"。
 - **M3 已知边界**：拉取用 `git clone --depth 1 --no-checkout` + 精确 `git checkout HEAD -- <dir>`，因此**需要本机 git**；`SKILLDESK_PROXY` 会传给 git，内网 git host 若不能走该代理需要在部署侧另外处理（本机未验证内网源安装）；暂未提供"卸载/更新已安装 skill"的动作，M4 的更新流程会补。
+- **M4 落地**（升级/卸载）：升级复用安装管线 + 三样额外保障：与本地副本的内容 diff、本地手改检测（基线里的 `localTree` 与现状不符即拒绝，需 `allowDrift`）、替换前备份到 `~/.cache/skilldesk/backup/<name>/`（保留 3 份）。升级后重记基线（新的 `dirTree`/`headRef`），lockfile 保留 `installedAt`、只更新 `updatedAt`。卸载清掉实体目录、软链、lockfile 条目与基线。
+- **M4 已知边界**：`from` 提交取自安装基线，对"基线是首次检查时补记"的历史安装，它代表**基线记录时的上游提交**而非安装时的提交（前端在 `from == to` 时会说明"本地副本与该提交内容有差异"，不装作没变化）；升级不处理 `ignoreDrift` 的"本地定制"语义（列为后续）。

@@ -168,9 +168,16 @@ def infer_provenance(dir_name: str, real_dir: str, frontmatter: dict, lock: dict
         if entry.get("sourceType") == "local":
             local_source = _local_source_root(source)
             continue
-        if entry.get("sourceType") == "github" and re.fullmatch(r"[\w.-]+/[\w.-]+", source):
-            source = "https://github.com/" + source
-        normalized = normalize_source(source)
+        normalized = None
+        for candidate in (entry.get("sourceUrl"), entry.get("source")):
+            raw = str(candidate or "").strip()
+            if not raw:
+                continue
+            if entry.get("sourceType") == "github" and re.fullmatch(r"[\w.-]+/[\w.-]+", raw):
+                raw = "https://github.com/" + raw
+            normalized = normalize_source(raw)
+            if normalized:
+                break
         if not normalized:
             continue
         host, repo = normalized

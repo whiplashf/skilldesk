@@ -80,6 +80,23 @@ export interface InstallResult {
   identity_key: string;
   counts: { skills: number; placements: number; issues: number };
 }
+export interface UpdatePlan extends InstallPlan {
+  kind: 'update';
+  from: string;
+  fromKnown: boolean;
+  to: string;
+  diff: { added: string[]; updated: string[]; removed: string[]; unchanged: number; identical: boolean };
+  localDrift: boolean;
+}
+export interface UninstallResult {
+  uninstalled: boolean;
+  name: string;
+  removedFolder: boolean;
+  removedLinks: string[];
+  removedLockEntry: boolean;
+  removedBaseline: boolean;
+  counts: { skills: number; placements: number; issues: number };
+}
 export interface UpstreamQuota {
   available: boolean;
   mode: 'token' | 'anonymous';

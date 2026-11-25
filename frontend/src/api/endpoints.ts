@@ -1,5 +1,5 @@
 import { getJson, withQuery, writeJson } from './client';
-import type { AISettings, AssetChanges, InstallPlan, InstallResult, RegistryResponse, SkillSummary, UpstreamQuota, VersionStatus } from './types';
+import type { AISettings, AssetChanges, InstallPlan, InstallResult, RegistryResponse, SkillSummary, UninstallResult, UpdatePlan, UpstreamQuota, VersionStatus } from './types';
 import type {
   Facets,
   FileContent,
@@ -55,6 +55,12 @@ export const api = {
     writeJson<InstallPlan>('/api/registry/plan', 'POST', body),
   installPlan: (planId: string, options: { force?: boolean; acknowledgeLicense?: boolean } = {}) =>
     writeJson<InstallResult>('/api/registry/install', 'POST', { planId, ...options }),
+  planUpdate: (key: string, refresh = false) =>
+    writeJson<UpdatePlan>('/api/skills/' + encodeURIComponent(key) + '/update/plan', 'POST', { refresh }),
+  applyUpdate: (key: string, planId: string, options: { allowDrift?: boolean; acknowledgeLicense?: boolean } = {}) =>
+    writeJson<InstallResult>('/api/skills/' + encodeURIComponent(key) + '/update', 'POST', { planId, ...options }),
+  uninstall: (key: string) =>
+    writeJson<UninstallResult>('/api/skills/' + encodeURIComponent(key) + '/uninstall', 'POST', { confirm: true }),
   importEntry: (body: { host?: string; repo: string; path: string; refresh?: boolean }) =>
     writeJson<{ imported: boolean; cached: string; bytes: number }>('/api/registry/import', 'POST', body),
   aiSettings: (signal: AbortSignal) => getJson<AISettings>('/api/settings/ai', signal),

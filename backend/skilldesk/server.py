@@ -21,7 +21,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
-from . import __version__, installer, library, registry, translation, upstream
+from . import __version__, installer, library, registry, translation, updater, upstream
 from . import index as index_mod
 from .config import config_path, index_path, load_config
 from .health import KINDS as HEALTH_KINDS
@@ -31,6 +31,7 @@ from .markdown import render, split_frontmatter
 from .repair import RepairError
 from .repair import fix_issue as repair_issue
 from .scan import MAX_SKILL_BYTES, input_stamp, read_body, scan
+from .updater import UpdateError
 
 RESCAN_THROTTLE_SECONDS = 3.0
 _rescan_lock = threading.Lock()
@@ -481,6 +482,79 @@ def create_app(db_path: str | Path | None = None, *, remote_token: str | None = 
             )
         except installer.InstallError as error:
             raise HTTPException(error.status, error.message) from error
+
+    def _installed_source(key: str) -> tuple[dict, dict, dict]:
+        item, annotations = get_installed(key)
+        source = upstream.source_for(item, annotations["assets"].get(key, {}))
+        if not source or not source["path"]:
+            raise HTTPException(400, "请先在来源中补全 GitHub 仓库与 SKILL.md 路径")
+        return item, source, annotations
+
+    @app.post("/api/skills/{key:path}/update/plan")
+    async def api_update_plan(key: str, request: Request) -> dict:
+        try:
+            body = await request.json()
+        except ValueError:
+            body = {}
+        _item, source, _annotations = _installed_source(key)
+        try:
+            return updater.plan_update(
+                "github.com",
+                source["repo"],
+                source["path"],
+                identity_key=key,
+                refresh=bool((body or {}).get("refresh")),
+            )
+        except (UpdateError, installer.InstallError) as error:
+            raise HTTPException(error.status, error.message) from error
+
+    @app.post("/api/skills/{key:path}/update")
+    async def api_update_apply(key: str, request: Request) -> dict:
+        body = await request.json()
+        plan_id = str((body or {}).get("planId") or "")
+        if not plan_id:
+            raise HTTPException(400, "需要 planId")
+        try:
+            result = updater.apply_update(
+                plan_id,
+                acknowledge_license=bool((body or {}).get("acknowledgeLicense")),
+                allow_drift=bool((body or {}).get("allowDrift")),
+            )
+        except (UpdateError, installer.InstallError) as error:
+            raise HTTPException(error.status, error.message) from error
+        rebuild_index(database)
+        conn = with_conn()
+        try:
+            return {**result, "counts": index_mod.counts(conn)}
+        finally:
+            conn.close()
+
+    @app.post("/api/skills/{key:path}/uninstall")
+    async def api_uninstall(key: str, request: Request) -> dict:
+        body = await request.json()
+        if not (body or {}).get("confirm"):
+            raise HTTPException(400, "卸载需要显式确认（confirm: true）")
+        conn = with_conn()
+        try:
+            item = index_mod.get_skill(conn, key)
+        finally:
+            conn.close()
+        if item is None:
+            raise HTTPException(404, "本机没有这个 skill")
+        result = updater.uninstall(
+            identity_key=key,
+            name=item["dir_name"],
+            target=item["realpath"],
+            repo=item["provenance"]["repo"],
+            dir_path=updater.installer._skill_dir(item["provenance"]["path"] or "SKILL.md"),
+            placements=item.get("placements") or [],
+        )
+        rebuild_index(database)
+        conn = with_conn()
+        try:
+            return {**result, "counts": index_mod.counts(conn)}
+        finally:
+            conn.close()
 
     @app.get("/api/upstream/quota")
     def upstream_quota() -> dict:
