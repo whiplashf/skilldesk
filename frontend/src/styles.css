@@ -413,3 +413,7 @@ kbd {
 .update-group--added .update-group-title { color: var(--accent); }
 .update-group--updated .update-group-title { color: var(--warn, #a1620a); }
 .update-group--removed .update-group-title { color: var(--ink-2); text-decoration: line-through; }
+
+.toast { position: fixed; right: 20px; bottom: 20px; z-index: 50; display: flex; align-items: flex-start; gap: 10px; max-width: min(560px, calc(100vw - 40px)); padding: 10px 12px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 6px; background: var(--surface); box-shadow: 0 10px 28px rgba(10, 20, 16, 0.18); font-size: 13px; }
+.toast--error { border-left-color: #b3261e; }
+.toast span { white-space: pre-wrap; }

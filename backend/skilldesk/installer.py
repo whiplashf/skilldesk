@@ -75,9 +75,12 @@ def _git(*args: str, cwd: Path | None = None, check: bool = True) -> str:
     if proxy and "://" in proxy:
         command += ["-c", f"http.proxy={proxy}", "-c", f"https.proxy={proxy}"]
     command += list(args)
-    completed = subprocess.run(
-        command, cwd=str(cwd) if cwd else None, capture_output=True, text=True, timeout=180, check=False
-    )
+    try:
+        completed = subprocess.run(
+            command, cwd=str(cwd) if cwd else None, capture_output=True, text=True, timeout=120, check=False
+        )
+    except subprocess.TimeoutExpired as error:
+        raise InstallError("拉取仓库超时（仓库较大或网络较慢），稍后重试或换用更小的仓库", 504) from error
     if check and completed.returncode != 0:
         detail = (completed.stderr or completed.stdout or "").strip().splitlines()
         raise InstallError(f"git 失败：{detail[-1][:160] if detail else '未知错误'}", 502)
@@ -93,9 +96,27 @@ def _clone_slot(host: str, repo: str) -> Path:
     return clones_dir() / safe
 
 
+def candidates(slot: Path, limit: int = 12) -> list[str]:
+    """Every SKILL.md path in the repository, so a wrong path can be corrected."""
+    output = _git("ls-tree", "-r", "--name-only", "HEAD", cwd=slot, check=False)
+    found = [line.strip() for line in output.splitlines() if line.strip().endswith("SKILL.md")]
+    return found[:limit]
+
+
+def _tar_candidates(root: Path, limit: int = 12) -> list[str]:
+    found: list[str] = []
+    for current, dirs, names in os.walk(root):
+        dirs[:] = [item for item in dirs if item != ".git"]
+        for name in names:
+            if name == "SKILL.md":
+                found.append(str((Path(current) / name).relative_to(root)).replace(os.sep, "/"))
+    return sorted(found)[:limit]
+
+
 def _path_in_head(slot: Path, relative: str) -> bool:
+    spec = "HEAD" if relative in ("", ".") else f"HEAD:{relative}"
     completed = subprocess.run(
-        ["git", "cat-file", "-e", f"HEAD:{relative}"],
+        ["git", "cat-file", "-e", spec],
         cwd=str(slot), capture_output=True, text=True, timeout=30, check=False,
     )
     return completed.returncode == 0
@@ -114,15 +135,186 @@ def _fresh_clone(host: str, repo: str, *, refresh: bool = False) -> tuple[Path, 
         shutil.rmtree(slot, ignore_errors=True)
     if not slot.exists():
         slot.parent.mkdir(parents=True, exist_ok=True)
-        _git("clone", "--depth", "1", "--no-checkout", clone_url(host, repo), str(slot))
+        # Partial clone: a heavy repository costs a few hundred KB instead of
+        # everything, and `checkout HEAD -- <dir>` fetches only that folder's blobs
+        # (measured: 60s+ timeout before, ~5s with this).
+        _git(
+            "clone",
+            "--depth",
+            "1",
+            "--no-checkout",
+            "--filter=blob:none",
+            "--single-branch",
+            "--no-tags",
+            clone_url(host, repo),
+            str(slot),
+        )
     commit = _git("rev-parse", "HEAD", cwd=slot).strip()
     return slot, commit
+
+
+def fetch_strategy(host: str) -> str:
+    """GitHub through a tarball (one HTTP stream), anything else through git.
+
+    Partial git clones look cheap but their lazy blob fetch can stall behind a
+    corporate proxy; a tarball is one request and finishes in seconds even for
+    repositories whose full clone takes minutes. ``SKILLDESK_FETCH=git`` forces
+    the git path (used by the tests, and an escape hatch).
+    """
+    if os.environ.get("SKILLDESK_FETCH", "").strip().lower() == "git":
+        return "git"
+    return "tarball" if host == "github.com" else "git"
+
+
+def _tarball_dir(host: str, repo: str, sha: str) -> Path:
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "__", f"{host}__{repo}")
+    return cache_dir() / "repos" / f"{safe}@{sha[:12]}"
+
+
+MAX_ARCHIVE_BYTES = 32 * 1024 * 1024
+ARCHIVE_DEADLINE = 45
+MAX_API_FILE_BYTES = 2 * 1024 * 1024
+
+
+class ArchiveTooLarge(InstallError):
+    def __init__(self, size: int) -> None:
+        super().__init__(f"仓库压缩包超过 {MAX_ARCHIVE_BYTES // (1024 * 1024)} MB（已下载 {size // (1024 * 1024)} MB）", 413)
+        self.size = size
+
+
+class ArchiveTooSlow(InstallError):
+    def __init__(self, written: int) -> None:
+        super().__init__(f"下载仓库压缩包超时（{ARCHIVE_DEADLINE} 秒内只到 {written // 1024} KB）", 504)
+        self.written = written
+
+
+def _download(url: str, target: Path, *, max_bytes: int = MAX_ARCHIVE_BYTES) -> None:
+    """Stream to disk but stop early: a huge repository must not hang a preview."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    partial = target.with_suffix(target.suffix + ".part")
+    from .net import http_client
+
+    written = 0
+    started = time.time()
+    try:
+        with http_client(headers={"User-Agent": "skilldesk"}, timeout=120, url_hint=url) as client, client.stream(
+            "GET", url
+        ) as response, partial.open("wb") as stream:
+            response.raise_for_status()
+            for chunk in response.iter_bytes(1024 * 256):
+                written += len(chunk)
+                if written > max_bytes:
+                    raise ArchiveTooLarge(written)
+                if time.time() - started > ARCHIVE_DEADLINE:
+                    raise ArchiveTooSlow(written)
+                stream.write(chunk)
+        partial.replace(target)
+    except BaseException:
+        partial.unlink(missing_ok=True)
+        raise
+
+
+def _extract_tarball(archive: Path, destination: Path, skill_dir: str) -> Path:
+    """Unpack ``<root>/<skill_dir>`` (or the whole tree) and return the repo root."""
+    import tarfile
+
+    destination.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(archive, "r:gz") as tar:
+        members = tar.getmembers()
+        if not members:
+            raise InstallError("仓库压缩包是空的", 502)
+        root = members[0].name.split("/")[0]
+        wanted = f"{root}/{skill_dir}".rstrip("/") if skill_dir else root
+        selected = [m for m in members if m.name == wanted or m.name.startswith(wanted + "/")]
+        if not selected:
+            raise InstallError(f"仓库里找不到 {skill_dir}", 404)
+        for member in selected:
+            tar.extract(member, path=destination, filter="data")
+    return destination / root
 
 
 def _remote_head(host: str, repo: str) -> str:
     output = _git("ls-remote", clone_url(host, repo), "HEAD")
     parts = output.split()
     return parts[0].strip() if parts else ""
+
+
+def prepare_repo(host: str, repo: str, skill_dir: str, *, refresh: bool = False) -> tuple[Path, str]:
+    """Materialise the repository (only the folders we need) and return (root, commit)."""
+    commit = _remote_head(host, repo)
+    if not commit:
+        raise InstallError("无法读取这个仓库的最新提交，请核对地址或访问权限", 502)
+    if fetch_strategy(host) == "git":
+        slot, checked_out = _fresh_clone(host, repo, refresh=refresh)
+        if not _path_in_head(slot, skill_dir or "."):
+            raise InstallError("仓库里找不到这个 skill 目录", 404)
+        materialise(slot, skill_dir)
+        return slot, checked_out
+    folder = _tarball_dir(host, repo, commit)
+    if refresh and folder.is_dir():
+        shutil.rmtree(folder, ignore_errors=True)
+    if not (folder / ".skilldesk-extracted").exists():
+        archive = cache_dir() / "tarballs" / (folder.name + ".tgz")
+        if refresh and archive.exists():
+            archive.unlink()
+        if not archive.exists():
+            try:
+                _download(f"https://codeload.github.com/{repo}/tar.gz/{commit}", archive)
+            except (ArchiveTooLarge, ArchiveTooSlow):
+                archive.unlink(missing_ok=True)
+                folder.mkdir(parents=True, exist_ok=True)
+                _extract_via_api(repo, commit, skill_dir, folder / "_api")
+                (folder / "_api").rename(folder / f"files-{commit[:12]}")
+                (folder / ".skilldesk-extracted").write_text(commit + " api", encoding="utf-8")
+                return folder / f"files-{commit[:12]}", commit
+        if not (folder / ".skilldesk-extracted").exists():
+            folder.mkdir(parents=True, exist_ok=True)
+            _extract_tarball(archive, folder, skill_dir)
+            (folder / ".skilldesk-extracted").write_text(commit, encoding="utf-8")
+    roots = [item for item in folder.iterdir() if item.is_dir()]
+    if len(roots) != 1:
+        raise InstallError("仓库压缩包结构异常（顶层不止一个目录）", 502)
+    return roots[0], commit
+
+
+def _extract_via_api(repo: str, ref: str, skill_dir: str, destination: Path) -> None:
+    """Fetch only the skill folder, one file at a time (used when the archive is huge)."""
+    import base64
+
+    with httpx_client() as client:
+        tree = client.get(f"https://api.github.com/repos/{repo}/git/trees/{ref}", params={"recursive": "1"})
+        tree.raise_for_status()
+        payload = tree.json()
+        if payload.get("truncated"):
+            raise InstallError("仓库文件太多，无法枚举；这个仓库不适合在这里安装", 413)
+        prefix = (skill_dir + "/") if skill_dir else ""
+        entries = [
+            entry
+            for entry in payload.get("tree") or []
+            if entry.get("type") == "blob" and str(entry.get("path", "")).startswith(prefix)
+        ]
+        if not entries:
+            raise InstallError(f"仓库里找不到 {skill_dir}", 404)
+        total = 0
+        for entry in entries:
+            path = str(entry["path"])
+            size = int(entry.get("size", 0))
+            if size > MAX_API_FILE_BYTES:
+                raise InstallError(f"{path} 超过单个文件上限 2 MB，无法按文件拉取", 413)
+            total += size
+            if total > MAX_ARCHIVE_BYTES:
+                raise InstallError("这个 skill 的文件总量过大，无法按文件拉取", 413)
+            response = client.get(f"https://api.github.com/repos/{repo}/contents/{path}", params={"ref": ref})
+            response.raise_for_status()
+            content = response.json().get("content") or ""
+            data = base64.b64decode(content) if content else b""
+            # Keep the full repository-relative layout so callers can address
+            # `root / "skills/x/SKILL.md"` exactly as with a real checkout.
+            target = destination / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+            mode = int(str(entry.get("mode", "100644")), 8) & 0o777
+            target.chmod(mode | 0o600)
 
 
 def _license_of(host: str, repo: str) -> str:
@@ -198,11 +390,12 @@ def target_roots() -> tuple[Path, list[Path]]:
 def plan(host: str, repo: str, path: str, *, refresh: bool = False) -> dict[str, Any]:
     entry = coordinates(host, repo, path)
     skill_dir = _skill_dir(entry["path"])
-    slot, commit = _fresh_clone(entry["host"], entry["repo"], refresh=refresh)
-    if not _path_in_head(slot, skill_dir or "."):
-        raise InstallError("仓库里找不到这个 skill 目录", 404)
-    materialise(slot, skill_dir)
-    files = _files_in(slot, skill_dir)
+    root, commit = prepare_repo(entry["host"], entry["repo"], skill_dir, refresh=refresh)
+    if not (root / entry["path"]).is_file():
+        found = candidates(root) if fetch_strategy(entry["host"]) == "git" else _tar_candidates(root)
+        hint = "；这个仓库里可用的 SKILL.md：" + "、".join(found) if found else ""
+        raise InstallError(f"仓库里没有 {entry['path']}{hint}", 404)
+    files = _files_in(root, skill_dir)
     total = sum(item["size"] for item in files)
     store, links = target_roots()
     name = Path(skill_dir).name if skill_dir else Path(entry["repo"].split("/")[-1]).name
@@ -237,7 +430,7 @@ def plan(host: str, repo: str, path: str, *, refresh: bool = False) -> dict[str,
         "target": str(target),
         "store": str(store),
         "links": [str(item) for item in links],
-        "clone": str(slot),
+        "clone": str(root),
         "warnings": warnings,
         "createdAt": int(time.time()),
         "expiresAt": int(time.time()) + PLAN_TTL,
@@ -298,13 +491,11 @@ def apply(plan_id: str, *, force: bool = False, acknowledge_license: bool = Fals
     if len(plan_payload["files"]) > MAX_FILES or plan_payload["totalBytes"] > MAX_TOTAL_BYTES:
         raise InstallError("这次安装超出了文件数或体积上限", 413)
 
-    slot = Path(plan_payload["clone"])
-    if not slot.is_dir():
-        slot, _commit = _fresh_clone(plan_payload["host"], plan_payload["repo"])
-    materialise(slot, _skill_dir(plan_payload["path"]))
-    head = _git("rev-parse", "HEAD", cwd=slot).strip()
     remote = _remote_head(plan_payload["host"], plan_payload["repo"])
-    if head != plan_payload["commit"] or (remote and remote != plan_payload["commit"]):
+    if remote and remote != plan_payload["commit"]:
+        raise InstallError("上游在你预览之后有了新提交，请重新预览再安装", 409)
+    root, head = prepare_repo(plan_payload["host"], plan_payload["repo"], _skill_dir(plan_payload["path"]))
+    if head != plan_payload["commit"]:
         raise InstallError("上游在你预览之后有了新提交，请重新预览再安装", 409)
 
     target = Path(plan_payload["target"])
@@ -317,7 +508,7 @@ def apply(plan_id: str, *, force: bool = False, acknowledge_license: bool = Fals
             shutil.rmtree(target)
 
     skill_dir = _skill_dir(plan_payload["path"])
-    source = slot / skill_dir if skill_dir else slot
+    source = root / skill_dir if skill_dir else root
     target.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix="skilldesk-install-", dir=str(target.parent)))
     try:
@@ -329,7 +520,7 @@ def apply(plan_id: str, *, force: bool = False, acknowledge_license: bool = Fals
 
     lockfile = _register_lockfile(plan_payload["name"], plan_payload)
     links = _link_agent_roots(plan_payload["name"], target, plan_payload["links"])
-    upstream_tree = _git("rev-parse", f"HEAD:{skill_dir}" if skill_dir else "HEAD", cwd=slot).strip()
+    upstream_tree = upstream._local_tree(source)
     baselines.record(
         f"src:{plan_payload['host']}/{plan_payload['repo']}@{plan_payload['path']}",
         repo=plan_payload["repo"],
@@ -366,9 +557,8 @@ def import_only(host: str, repo: str, path: str, *, refresh: bool = False) -> di
     target = vendor_path(entry["host"], entry["repo"], entry["path"])
     if target.is_file() and not refresh:
         return {"imported": False, "cached": str(target), "bytes": target.stat().st_size}
-    slot, commit = _fresh_clone(entry["host"], entry["repo"], refresh=refresh)
-    materialise(slot, _skill_dir(entry["path"]))
-    source = slot / entry["path"]
+    root, commit = prepare_repo(entry["host"], entry["repo"], _skill_dir(entry["path"]), refresh=refresh)
+    source = root / entry["path"]
     if not source.is_file():
         raise InstallError("仓库里找不到这个 SKILL.md", 404)
     target.parent.mkdir(parents=True, exist_ok=True)

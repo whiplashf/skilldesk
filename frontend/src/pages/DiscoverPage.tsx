@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { InstallPlan, RegistryEntry, RegistryResponse, UpdatePlan } from '../api/types';
 import { api } from '../api/endpoints';
 import { Badge } from '../components/Badge';
@@ -156,7 +156,7 @@ function RegistryGroup({
                       disabled={running}
                       onClick={() => onPreview(entry)}
                     >
-                      {running ? '预览中…' : '预览并安装'}
+                      {running ? '处理中…' : '预览并安装'}
                     </button>
                     <button
                       type="button"
@@ -199,6 +199,16 @@ export function DiscoverPage({ onInstalled }: DiscoverPageProps) {
   const [busy, setBusy] = useState('');
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
+  const toast = error ? { kind: 'error' as const, text: error } : notice ? { kind: 'ok' as const, text: notice } : null;
+
+  useEffect(() => {
+    if (!error && !notice) return;
+    const timer = window.setTimeout(() => {
+      setError('');
+      setNotice('');
+    }, 8000);
+    return () => window.clearTimeout(timer);
+  }, [error, notice]);
   const [plan, setPlan] = useState<InstallPlan | null>(null);
   const [filter, setFilter] = useState<StateFilter>('installable');
   const [versions, setVersions] = useState<Record<string, { label: string; updatable: boolean }>>({});
@@ -310,6 +320,11 @@ export function DiscoverPage({ onInstalled }: DiscoverPageProps) {
 
       <section className="block">
         <h2 className="block-title">从链接导入</h2>
+        {busy ? (
+          <p className="action-message" role="status">
+            正在向 GitHub 拉取仓库并生成预览…大仓库可能需要几十秒；超过 45 秒会自动改用按文件方式拉取。
+          </p>
+        ) : null}
         <div className="import-row">
           <input
             className="import-input mono"
@@ -330,19 +345,27 @@ export function DiscoverPage({ onInstalled }: DiscoverPageProps) {
           <button
             type="button"
             className="button"
-            disabled={parsed === null || busy !== ''}
+            disabled={busy !== ''}
             onClick={() => {
-              if (parsed) void preview(parsed);
+              if (!parsed) {
+                setError('请先填写 owner/repo 或一个 GitHub 链接（例如 https://github.com/owner/repo/tree/main/skills/x）');
+                return;
+              }
+              void preview(parsed);
             }}
           >
-            预览安装
+            {busy ? '处理中…' : '预览安装'}
           </button>
           <button
             type="button"
             className="button button--ghost"
-            disabled={parsed === null || busy !== ''}
+            disabled={busy !== ''}
             onClick={() => {
-              if (parsed) void register(parsed);
+              if (!parsed) {
+                setError('请先填写 owner/repo 或一个 GitHub 链接');
+                return;
+              }
+              void register(parsed);
             }}
           >
             只登记正文
@@ -355,15 +378,21 @@ export function DiscoverPage({ onInstalled }: DiscoverPageProps) {
         </p>
       </section>
 
-      {notice ? (
-        <p className="action-message" role="status">
-          {notice}
-        </p>
-      ) : null}
-      {error ? (
-        <p className="action-message" role="alert">
-          {error}
-        </p>
+      {toast ? (
+        <div className={`toast toast--${toast.kind}`} role={toast.kind === 'error' ? 'alert' : 'status'}>
+          <span>{toast.text}</span>
+          <button
+            type="button"
+            className="link-button"
+            aria-label="关闭提示"
+            onClick={() => {
+              setError('');
+              setNotice('');
+            }}
+          >
+            ×
+          </button>
+        </div>
       ) : null}
 
       <div className="discover-filter" role="group" aria-label="按状态筛选">

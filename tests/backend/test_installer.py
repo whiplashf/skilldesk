@@ -42,6 +42,7 @@ def remote(tmp_path: Path) -> Path:
 @pytest.fixture
 def wired(fake_home: Path, remote: Path, monkeypatch: pytest.MonkeyPatch):
     """Point the installer at the local remote and the throwaway HOME."""
+    monkeypatch.setenv("SKILLDESK_FETCH", "git")  # the fixture remote is a local path
     monkeypatch.setattr(installer, "clone_url", lambda host, repo: str(remote))
     monkeypatch.setattr(installer, "_license_of", lambda host, repo: "MIT")
     store = fake_home / ".agents" / "skills"
@@ -209,3 +210,45 @@ class TestImport:
         second = installer.import_only("github.com", "acme/pack", "skills/alpha/SKILL.md")
         assert first["imported"] is True
         assert second["imported"] is False
+
+
+class TestFetchStrategy:
+    def test_github_uses_the_tarball(self) -> None:
+        assert installer.fetch_strategy("github.com") == "tarball"
+
+    def test_other_hosts_use_git(self) -> None:
+        assert installer.fetch_strategy("git.example.com") == "git"
+
+    def test_env_override_forces_git(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("SKILLDESK_FETCH", "git")
+        assert installer.fetch_strategy("github.com") == "git"
+
+
+class TestWrongPathHint:
+    def test_missing_path_lists_available_skill_md(self, wired) -> None:
+        with pytest.raises(installer.InstallError) as raised:
+            installer.plan("github.com", "acme/pack", "SKILL.md")
+        assert raised.value.status == 404
+        assert "可用的 SKILL.md" in raised.value.message
+        assert "skills/alpha/SKILL.md" in raised.value.message
+
+    def test_candidates_walk_a_prepared_tree(self, wired, tmp_path: Path) -> None:
+        root = tmp_path / "tree"
+        (root / "skills" / "one").mkdir(parents=True)
+        (root / "skills" / "one" / "SKILL.md").write_text("x", encoding="utf-8")
+        (root / "other").mkdir()
+        (root / "other" / "SKILL.md").write_text("y", encoding="utf-8")
+        found = installer._tar_candidates(root)
+        assert found == ["other/SKILL.md", "skills/one/SKILL.md"]
+
+
+class TestArchiveGuards:
+    def test_archive_too_large_is_a_413(self) -> None:
+        error = installer.ArchiveTooLarge(installer.MAX_ARCHIVE_BYTES + 1)
+        assert error.status == 413
+        assert "MB" in error.message
+
+    def test_archive_too_slow_is_a_504(self) -> None:
+        error = installer.ArchiveTooSlow(1024)
+        assert error.status == 504
+        assert "超时" in error.message

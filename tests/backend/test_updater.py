@@ -35,6 +35,7 @@ def remote(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def installed(fake_home: Path, remote: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
+    monkeypatch.setenv("SKILLDESK_FETCH", "git")  # the fixture remote is a local path
     monkeypatch.setattr(installer, "clone_url", lambda host, repo: str(remote))
     monkeypatch.setattr(installer, "_license_of", lambda host, repo: "MIT")
     store = fake_home / ".agents" / "skills"
