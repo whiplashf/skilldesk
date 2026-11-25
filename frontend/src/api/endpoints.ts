@@ -1,5 +1,5 @@
 import { getJson, withQuery, writeJson } from './client';
-import type { AISettings, AssetChanges, SkillSummary, VersionStatus } from './types';
+import type { AISettings, AssetChanges, SkillSummary, UpstreamQuota, VersionStatus } from './types';
 import type {
   Facets,
   FileContent,
@@ -42,6 +42,7 @@ export const api = {
   translate: (key: string) => writeJson<{ html: string; cached: boolean }>('/api/ai/translate', 'POST', { identity_key: key }),
   checkVersion: (key: string, force = false) => writeJson<VersionStatus>('/api/check', 'POST', { identity_key: key, force }),
   aiSettings: (signal: AbortSignal) => getJson<AISettings>('/api/settings/ai', signal),
+  upstreamQuota: (signal: AbortSignal) => getJson<UpstreamQuota>('/api/upstream/quota', signal),
   saveAI: (body: {baseUrl: string; model: string; apiKey?: string}) => writeJson<AISettings>('/api/settings/ai', 'PUT', body),
   health: (signal: AbortSignal): Promise<Health> => getJson<Health>('/api/health', signal),
 

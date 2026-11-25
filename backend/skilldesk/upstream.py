@@ -19,13 +19,16 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import time
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote
 
+import httpx
+
 from . import baselines
-from .config import cache_dir
+from .config import cache_dir, config_dir
 from .library import read_json, write_json
 from .markdown import split_frontmatter
 from .net import http_client
@@ -43,6 +46,68 @@ def _optional(get, endpoint: str, params: dict):
         return get(endpoint, params)
     except Exception:  # noqa: BLE001 - a failing optimisation must never fail the check
         return None
+
+
+_GH_TOKEN: str | None = None
+
+
+def _gh_token() -> str:
+    """Reuse the token of a logged-in ``gh`` CLI, the most common local setup."""
+    global _GH_TOKEN
+    if _GH_TOKEN is not None:
+        return _GH_TOKEN
+    try:
+        completed = subprocess.run(
+            ["gh", "auth", "token"], capture_output=True, text=True, timeout=5, check=False
+        )
+        _GH_TOKEN = completed.stdout.strip() if completed.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError):
+        _GH_TOKEN = ""
+    return _GH_TOKEN
+
+
+def github_token() -> tuple[str, str]:
+    """``(token, source)``; anonymous access returns ``("", "")``."""
+    value = os.environ.get("SKILLDESK_GITHUB_TOKEN", "").strip()
+    if value:
+        return value, "env"
+    config = read_json(config_dir() / "upstream.json", {})
+    if isinstance(config, dict):
+        value = str(config.get("githubToken") or "").strip()
+        if value:
+            return value, "config"
+    value = _gh_token()
+    return (value, "gh") if value else ("", "")
+
+
+def github_headers() -> dict:
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "skilldesk"}
+    token, _source = github_token()
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    return headers
+
+
+def quota() -> dict:
+    """How much GitHub API budget the current credential has left."""
+    token, source = github_token()
+    mode = "token" if token else "anonymous"
+    try:
+        with http_client(headers=github_headers(), timeout=10, url_hint="https://api.github.com/rate_limit") as client:
+            response = client.get("https://api.github.com/rate_limit")
+            response.raise_for_status()
+            rate = response.json().get("rate", {})
+    except (httpx.HTTPError, ValueError, LookupError) as error:
+        return {"available": False, "mode": mode, "source": source, "detail": str(error)[:140]}
+    return {
+        "available": True,
+        "mode": mode,
+        "source": source,
+        "limit": int(rate.get("limit", 0)),
+        "remaining": int(rate.get("remaining", 0)),
+        "reset": int(rate.get("reset", 0)),
+        "checkedAt": int(time.time()),
+    }
 
 
 class QuotaExhausted(RuntimeError):
@@ -423,8 +488,8 @@ def evaluate(item: dict, source: dict, get, *, fresh: bool = False) -> dict:
 
 
 def _preflight(client) -> None:
-    """Refuse early when the anonymous quota is spent (``/rate_limit`` is free)."""
-    if os.environ.get("SKILLDESK_GITHUB_TOKEN"):
+    """Refuse early when the quota is spent (``/rate_limit`` itself is free)."""
+    if github_token()[0]:
         return
     now = time.time()
     if _RATE_STATE["remaining"] >= 0 and now - _RATE_STATE["checked"] < 60:
@@ -444,9 +509,7 @@ def check(item: dict, source: dict, force: bool = False) -> dict:
     saved = previous(item, source)
     if saved and not force and time.time() - saved["checkedAt"] < TTL:
         return saved
-    headers = {"Accept": "application/vnd.github+json", "User-Agent": "skilldesk"}
-    if token := os.environ.get("SKILLDESK_GITHUB_TOKEN"):
-        headers["Authorization"] = "Bearer " + token
+    headers = github_headers()
     base = "https://api.github.com/repos/" + source["repo"]
     memo: dict = {}
     with http_client(headers=headers, timeout=20, url_hint=base) as client:

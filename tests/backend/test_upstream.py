@@ -305,6 +305,7 @@ class TestQuota:
 
         upstream._RATE_STATE.update(checked=0.0, remaining=-1.0, reset=0.0)
         monkeypatch.delenv("SKILLDESK_GITHUB_TOKEN", raising=False)
+        monkeypatch.setattr(upstream, "_gh_token", lambda: "")
         with pytest.raises(upstream.QuotaExhausted) as raised:
             upstream._preflight(Client())
         assert raised.value.reset == 1795568800
@@ -335,7 +336,99 @@ class TestQuota:
                 return Response()
 
         monkeypatch.delenv("SKILLDESK_GITHUB_TOKEN", raising=False)
+        monkeypatch.setattr(upstream, "_gh_token", lambda: "")
         upstream._RATE_STATE.update(checked=0.0, remaining=-1.0, reset=0.0)
         upstream._preflight(Client())
         upstream._preflight(Client())
         assert Client.calls == 1
+
+
+class FakeHTTP:
+    """Minimal stand-in for httpx.Client used by quota()."""
+
+    def __init__(self, payload: dict, status: int = 200) -> None:
+        self.payload = payload
+        self.status = status
+        self.headers: dict = {}
+
+    def __enter__(self) -> FakeHTTP:  # noqa: PYI034 - py3.10 has no typing.Self
+        return self
+
+    def __exit__(self, *exc) -> None:
+        return None
+
+    def get(self, url: str):
+        assert "rate_limit" in url
+
+        class Response:
+            status_code = self.status
+
+            def raise_for_status(inner) -> None:
+                import httpx
+
+                if self.status >= 400:
+                    raise httpx.HTTPStatusError("nope", request=None, response=None)  # type: ignore[arg-type]
+
+            def json(inner) -> dict:
+                return self.payload
+
+        return Response()
+
+
+class TestGithubCredential:
+    def test_env_token_wins(self, fake_home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("SKILLDESK_GITHUB_TOKEN", "env-token")
+        assert upstream.github_token() == ("env-token", "env")
+        assert upstream.github_headers()["Authorization"] == "Bearer env-token"
+
+    def test_config_file_is_used_without_env(self, fake_home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("SKILLDESK_GITHUB_TOKEN", raising=False)
+        monkeypatch.setattr(upstream, "_gh_token", lambda: "")
+        (fake_home / ".config" / "skilldesk").mkdir(parents=True, exist_ok=True)
+        (fake_home / ".config" / "skilldesk" / "upstream.json").write_text(
+            json.dumps({"githubToken": "file-token"}), encoding="utf-8"
+        )
+        assert upstream.github_token() == ("file-token", "config")
+
+    def test_gh_cli_is_the_last_resort(self, fake_home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("SKILLDESK_GITHUB_TOKEN", raising=False)
+        monkeypatch.setattr(upstream, "_gh_token", lambda: "gh-token")
+        assert upstream.github_token() == ("gh-token", "gh")
+
+    def test_anonymous_when_nothing_is_configured(self, fake_home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("SKILLDESK_GITHUB_TOKEN", raising=False)
+        monkeypatch.setattr(upstream, "_gh_token", lambda: "")
+        assert upstream.github_token() == ("", "")
+        assert "Authorization" not in upstream.github_headers()
+
+    def test_preflight_is_skipped_with_any_token(self, fake_home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("SKILLDESK_GITHUB_TOKEN", raising=False)
+        monkeypatch.setattr(upstream, "_gh_token", lambda: "gh-token")
+
+        class Client:
+            def get(self, url: str):  # pragma: no cover - must not run
+                raise AssertionError("preflight must not run with a token")
+
+        upstream._preflight(Client())
+
+
+class TestQuotaReporting:
+    def test_quota_reports_a_token_budget(self, fake_home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("SKILLDESK_GITHUB_TOKEN", "t")
+        monkeypatch.setattr(upstream, "http_client", lambda **kw: FakeHTTP({"rate": {"limit": 5000, "remaining": 4999, "reset": 1795572222}}))
+        result = upstream.quota()
+        assert (result["available"], result["mode"], result["source"]) == (True, "token", "env")
+        assert result["limit"] == 5000 and result["remaining"] == 4999
+
+    def test_quota_reports_anonymous_mode(self, fake_home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("SKILLDESK_GITHUB_TOKEN", raising=False)
+        monkeypatch.setattr(upstream, "_gh_token", lambda: "")
+        monkeypatch.setattr(upstream, "http_client", lambda **kw: FakeHTTP({"rate": {"limit": 60, "remaining": 0, "reset": 1795572222}}))
+        result = upstream.quota()
+        assert result["mode"] == "anonymous" and result["remaining"] == 0
+
+    def test_quota_survives_a_network_error(self, fake_home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("SKILLDESK_GITHUB_TOKEN", "t")
+        monkeypatch.setattr(upstream, "http_client", lambda **kw: FakeHTTP({}, status=500))
+        result = upstream.quota()
+        assert result["available"] is False and result["detail"]

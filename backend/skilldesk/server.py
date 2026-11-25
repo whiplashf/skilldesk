@@ -345,6 +345,10 @@ def create_app(db_path: str | Path | None = None, *, remote_token: str | None = 
         except (httpx.HTTPError, ValueError, LookupError, TypeError) as error:
             raise HTTPException(502, "翻译失败，请检查服务地址、模型与密钥后重试") from error
 
+    @app.get("/api/upstream/quota")
+    def upstream_quota() -> dict:
+        return upstream.quota()
+
     @app.post("/api/check")
     def check_upstream(action: SkillAction):
         item, annotations = get_installed(action.identity_key)
@@ -357,7 +361,11 @@ def create_app(db_path: str | Path | None = None, *, remote_token: str | None = 
             raise HTTPException(400, str(error))
         except upstream.QuotaExhausted as error:
             until = time.strftime("%H:%M", time.localtime(error.reset))
-            raise HTTPException(429, f"GitHub 检查额度已用完（匿名每小时 60 次），约 {until} 恢复") from error
+            raise HTTPException(
+                429,
+                f"GitHub 检查额度已用完（每小时按凭据限额），约 {until} 恢复；"
+                "配置 GitHub token 可提升到每小时 5000 次",
+            ) from error
         except httpx.HTTPStatusError as error:
             if error.response.status_code == 429 or (
                 error.response.status_code == 403 and error.response.headers.get("x-ratelimit-remaining") == "0"

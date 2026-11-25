@@ -1,6 +1,6 @@
 import { TranslationSettings } from '../components/TranslationSettings';
 import { ProjectSettings } from '../components/ProjectSettings';
-import type { Health, RootsResponse } from '../api/types';
+import type { Health, RootsResponse, UpstreamQuota } from '../api/types';
 import { api } from '../api/endpoints';
 import { formatCount, formatDateTime, formatRelative, toIsoString } from '../lib/format';
 import { hostKindLabel } from '../lib/labels';
@@ -112,8 +112,58 @@ function IndexTable({ health, onRetry }: { health: AsyncState<Health>; onRetry: 
   );
 }
 
+function UpstreamQuotaBlock({ quota, onRetry }: { quota: AsyncState<UpstreamQuota>; onRetry: () => void }) {
+  if (quota.status === 'loading') {
+    return <TableSkeleton rows={2} />;
+  }
+  if (quota.status === 'error') {
+    return <ErrorState title="GitHub 额度读取失败" message={quota.error} onRetry={onRetry} />;
+  }
+  const data = quota.data;
+  if (!data.available) {
+    return (
+      <p className="block-note">
+        无法读取 GitHub 额度：{data.detail ?? '未知错误'}（检查是否配置了代理或网络不通）
+      </p>
+    );
+  }
+  const reset = data.reset ? new Date(data.reset * 1000).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '未知';
+  return (
+    <>
+      <table className="table table--kv">
+        <tbody>
+          <tr>
+            <th scope="row">凭据</th>
+            <td className="mono">
+              {data.mode === 'token'
+                ? `GitHub token（来源：${data.source === 'env' ? '环境变量' : data.source === 'config' ? 'upstream.json' : '本机 gh CLI'}）`
+                : '匿名访问'}
+            </td>
+          </tr>
+          <tr>
+            <th scope="row">剩余额度</th>
+            <td className="mono">
+              {formatCount(data.remaining ?? 0)} / {formatCount(data.limit ?? 0)} · 每小时
+            </td>
+          </tr>
+          <tr>
+            <th scope="row">重置时间</th>
+            <td className="mono">{reset}</td>
+          </tr>
+        </tbody>
+      </table>
+      <p className="block-note">
+        {data.mode === 'token'
+          ? '已使用 token，单次版本检查成本很低（同仓库 skill 共享一次请求）。'
+          : '匿名每小时只有 60 次，检查整个库会很快用完。配置 token 可提升到每小时 5000 次：设置环境变量 SKILLDESK_GITHUB_TOKEN，或写 ~/.config/skilldesk/upstream.json 的 {"githubToken": "..."}（本机已登录 gh 时也会自动复用）。'}
+      </p>
+    </>
+  );
+}
+
 export function SettingsPage({ health, onRetryHealth }: SettingsPageProps) {
   const roots = useApi<RootsResponse>((signal) => api.roots(signal), []);
+  const quota = useApi<UpstreamQuota>((signal) => api.upstreamQuota(signal), []);
 
   return (
     <div className="page">
@@ -124,6 +174,11 @@ export function SettingsPage({ health, onRetryHealth }: SettingsPageProps) {
       <section className="block">
         <h2 className="block-title">宿主根</h2>
         <HostRootsTable roots={roots.state} onRetry={roots.reload} />
+      </section>
+
+      <section className="block">
+        <h2 className="block-title">GitHub 检查</h2>
+        <UpstreamQuotaBlock quota={quota.state} onRetry={quota.reload} />
       </section>
 
       <section className="block">

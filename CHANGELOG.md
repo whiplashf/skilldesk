@@ -2,6 +2,7 @@
 
 ## 未发布 · 本机技能库
 
+- 版本检查不再被匿名配额卡死：凭据按 环境变量 `SKILLDESK_GITHUB_TOKEN` → `~/.config/skilldesk/upstream.json` 的 `{"githubToken": ...}` → 已登录的 `gh` CLI 依次解析（本机实测自动复用 gh 的 token，额度 60 → **5000 次/小时**）。新增 `GET /api/upstream/quota`，设置页「GitHub 检查」显示凭据来源、剩余额度与重置时间；额度用尽的 429 会直接写出恢复时间。另修一处误导：检查失败时不再把上一次的「已是最新」当成本次结果展示，而是标成「上次检查结果」。
 - 版本检查有了真正的**安装基线**：新增 `backend/skilldesk/baselines.py`，首次检查时记录上游目录的 git tree SHA 与本地目录指纹（存 `~/.local/state/skilldesk/baselines.json`，删掉只丢历史不丢数据）。之后每次检查即可回答两件事：上游目录有没有变、本地副本有没有被手改（`localModified`，详情里会附一句说明）。
 - 目录指纹改为「本地目录 vs 上游当前目录」直比，这台机器上 GitHub 来源的 51 个 skill 立刻从"待确认版本"变成可比对；没有可比记录时状态是新增的 **已记录基线**，而不是假装"已是最新"。
 - 顺带修掉配额浪费：仓库级响应（HEAD、递归 tree、releases）按进程缓存，`force` 只绕过单个 skill 的结果缓存 —— 否则"检查本页 50 个"会花掉 150 次请求（匿名配额 60/小时）。索引 schema 升到 4，多存 `installedAt`（用于"安装后仓库无新提交"这种保守判断）。

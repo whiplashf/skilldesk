@@ -26,6 +26,16 @@ export interface VersionStatus {
   url: string;
   detail: string;
 }
+export interface UpstreamQuota {
+  available: boolean;
+  mode: 'token' | 'anonymous';
+  source: '' | 'env' | 'config' | 'gh';
+  limit?: number;
+  remaining?: number;
+  reset?: number;
+  checkedAt?: number;
+  detail?: string;
+}
 export interface AISettings {
   baseUrl: string; model: string; hasKey: boolean; enabled: boolean;
   baseFromEnv: boolean; modelFromEnv: boolean; keyFromEnv: boolean;
