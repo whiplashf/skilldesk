@@ -258,14 +258,17 @@ def _serve(args: argparse.Namespace, open_browser: bool) -> int:
     url = f"http://{args.host}:{args.port}/"
     if not open_browser:
         print(f"skilldesk → {url}")
-        uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+        # proxy_headers stays off: the access guard decides trust from the immediate
+        # peer, and uvicorn would otherwise replace that peer with X-Forwarded-For.
+        uvicorn.run(app, host=args.host, port=args.port, log_level="info", proxy_headers=False)
         return EXIT_OK
 
     import threading
     import time
     import webbrowser
 
-    config = uvicorn.Config(app, host=args.host, port=args.port, log_level="warning")
+    # see the note in the serve branch: trust is peer-based, not header-based
+    config = uvicorn.Config(app, host=args.host, port=args.port, log_level="warning", proxy_headers=False)
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
