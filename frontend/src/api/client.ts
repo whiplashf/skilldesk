@@ -1,10 +1,13 @@
 export class ApiError extends Error {
   readonly status: number;
+  /** Structured hints from the server (e.g. the SKILL.md paths that do exist). */
+  readonly candidates: string[];
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, candidates: string[] = []) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.candidates = candidates;
   }
 }
 
@@ -43,7 +46,12 @@ export function withQuery(path: string, params: Record<string, QueryValue>): str
   return query ? `${path}?${query}` : path;
 }
 
-async function readFailureReason(response: Response): Promise<string | null> {
+interface Failure {
+  message: string;
+  candidates: string[];
+}
+
+async function readFailureReason(response: Response): Promise<Failure | null> {
   try {
     const body: unknown = await response.json();
     if (typeof body !== 'object' || body === null) {
@@ -51,13 +59,23 @@ async function readFailureReason(response: Response): Promise<string | null> {
     }
     const record = body as Record<string, unknown>;
     if (typeof record.detail === 'string' && record.detail !== '') {
-      return record.detail;
+      return { message: record.detail, candidates: [] };
+    }
+    if (typeof record.detail === 'object' && record.detail !== null) {
+      const detail = record.detail as Record<string, unknown>;
+      const message = typeof detail.message === 'string' ? detail.message : '';
+      const candidates = Array.isArray(detail.candidates)
+        ? detail.candidates.filter((item): item is string => typeof item === 'string')
+        : [];
+      if (message || candidates.length > 0) {
+        return { message: message || '请求失败', candidates };
+      }
     }
     const error = record.error;
     if (typeof error === 'object' && error !== null) {
       const message = (error as Record<string, unknown>).message;
       if (typeof message === 'string' && message !== '') {
-        return message;
+        return { message, candidates: [] };
       }
     }
   } catch {
@@ -87,7 +105,11 @@ export async function getJson<T>(path: string, signal?: AbortSignal, options?: R
 
   if (!response.ok) {
     const reason = await readFailureReason(response);
-    throw new ApiError(response.status, reason ?? `请求失败（HTTP ${response.status}）`);
+    throw new ApiError(
+      response.status,
+      reason?.message ?? `请求失败（HTTP ${response.status}）`,
+      reason?.candidates ?? [],
+    );
   }
 
   return (await response.json()) as T;

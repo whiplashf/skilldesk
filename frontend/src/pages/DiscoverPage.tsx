@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { InstallPlan, RegistryEntry, RegistryResponse, UpdatePlan } from '../api/types';
 import { api } from '../api/endpoints';
+import { ApiError } from '../api/client';
 import { Badge } from '../components/Badge';
 import { ErrorState } from '../components/ErrorState';
 import { ConfirmDialog } from '../components/ConfirmDialog';
@@ -211,6 +212,7 @@ export function DiscoverPage({ onInstalled }: DiscoverPageProps) {
   }, [error, notice]);
   const [plan, setPlan] = useState<InstallPlan | null>(null);
   const [filter, setFilter] = useState<StateFilter>('installable');
+  const [candidates, setCandidates] = useState<string[]>([]);
   const [versions, setVersions] = useState<Record<string, { label: string; updatable: boolean }>>({});
   const [updateTarget, setUpdateTarget] = useState<{ plan: UpdatePlan; identityKey: string } | null>(null);
   const [uninstallTarget, setUninstallTarget] = useState<RegistryEntry | null>(null);
@@ -238,12 +240,23 @@ export function DiscoverPage({ onInstalled }: DiscoverPageProps) {
 
   const parsed = parseSource(input, pathInput);
 
-  async function preview(target: { host: string; repo: string; path: string }) {
+  async function preview(target: { host: string; repo: string; path: string }, retry = true) {
     setBusy(`${target.host}:${target.repo}@${target.path}`);
     setError('');
     try {
-      setPlan(await api.planInstall(target));
+      const result = await api.planInstall(target);
+      if (result.resolved) {
+        setNotice(`已自动定位到 ${result.path}`);
+      }
+      setPlan(result);
     } catch (caught) {
+      // Exactly one SKILL.md in the repository: that is unambiguous, so use it.
+      const candidates = caught instanceof ApiError ? caught.candidates : [];
+      if (retry && candidates.length === 1 && candidates[0]) {
+        await preview({ ...target, path: candidates[0] }, false);
+        return;
+      }
+      setCandidates(candidates);
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
       setBusy('');
@@ -380,7 +393,28 @@ export function DiscoverPage({ onInstalled }: DiscoverPageProps) {
 
       {toast ? (
         <div className={`toast toast--${toast.kind}`} role={toast.kind === 'error' ? 'alert' : 'status'}>
-          <span>{toast.text}</span>
+          <div className="toast-body">
+            <span>{toast.text}</span>
+            {candidates.length > 1 ? (
+              <div className="toast-actions">
+                {candidates.map((path) => (
+                  <button
+                    key={path}
+                    type="button"
+                    className="button button--small"
+                    onClick={() => {
+                      setPathInput(path);
+                      setError('');
+                      setCandidates([]);
+                      if (parsed) void preview({ ...parsed, path });
+                    }}
+                  >
+                    用 {path}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
           <button
             type="button"
             className="link-button"
@@ -388,6 +422,7 @@ export function DiscoverPage({ onInstalled }: DiscoverPageProps) {
             onClick={() => {
               setError('');
               setNotice('');
+              setCandidates([]);
             }}
           >
             ×

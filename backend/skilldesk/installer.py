@@ -43,10 +43,11 @@ LOCKFILE = ".skill-lock.json"
 
 
 class InstallError(Exception):
-    def __init__(self, message: str, status: int = 400) -> None:
+    def __init__(self, message: str, status: int = 400, candidates: list[str] | None = None) -> None:
         super().__init__(message)
         self.message = message
         self.status = status
+        self.candidates = candidates or []
 
 
 # --------------------------------------------------------------------- helpers
@@ -391,10 +392,19 @@ def plan(host: str, repo: str, path: str, *, refresh: bool = False) -> dict[str,
     entry = coordinates(host, repo, path)
     skill_dir = _skill_dir(entry["path"])
     root, commit = prepare_repo(entry["host"], entry["repo"], skill_dir, refresh=refresh)
+    requested = entry["path"]
+    resolved = False
     if not (root / entry["path"]).is_file():
         found = candidates(root) if fetch_strategy(entry["host"]) == "git" else _tar_candidates(root)
-        hint = "；这个仓库里可用的 SKILL.md：" + "、".join(found) if found else ""
-        raise InstallError(f"仓库里没有 {entry['path']}{hint}", 404)
+        # A repository pasted as a plain URL usually keeps its SKILL.md one level
+        # down. If exactly one exists, that is unambiguous: use it.
+        if requested == "SKILL.md" and len(found) == 1:
+            entry = {**entry, "path": found[0]}
+            skill_dir = _skill_dir(entry["path"])
+            resolved = True
+        else:
+            hint = "；这个仓库里可用的 SKILL.md：" + "、".join(found) if found else ""
+            raise InstallError(f"仓库里没有 {requested}{hint}", 404, candidates=found)
     files = _files_in(root, skill_dir)
     total = sum(item["size"] for item in files)
     store, links = target_roots()
@@ -421,6 +431,8 @@ def plan(host: str, repo: str, path: str, *, refresh: bool = False) -> dict[str,
         "host": entry["host"],
         "repo": entry["repo"],
         "path": entry["path"],
+        "requestedPath": requested,
+        "resolved": resolved,
         "name": name,
         "commit": commit,
         "license": license_id,

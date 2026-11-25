@@ -225,12 +225,25 @@ class TestFetchStrategy:
 
 
 class TestWrongPathHint:
-    def test_missing_path_lists_available_skill_md(self, wired) -> None:
+    def test_a_single_skill_md_is_used_automatically(self, wired) -> None:
+        """Pasting just the repository URL is enough when the repo has one skill."""
+        plan = installer.plan("github.com", "acme/pack", "SKILL.md")
+        assert plan["resolved"] is True
+        assert plan["path"] == "skills/alpha/SKILL.md"
+        assert plan["requestedPath"] == "SKILL.md"
+        assert plan["name"] == "alpha"
+
+    def test_several_skills_are_reported_instead_of_guessed(self, wired) -> None:
+        extra = wired["remote"] / "skills" / "bravo"
+        extra.mkdir(parents=True)
+        (extra / "SKILL.md").write_text("---\nname: bravo\n---\n\n# Bravo\n", encoding="utf-8")
+        git(wired["remote"], "add", "-A")
+        git(wired["remote"], "commit", "-qm", "second skill")
         with pytest.raises(installer.InstallError) as raised:
-            installer.plan("github.com", "acme/pack", "SKILL.md")
+            installer.plan("github.com", "acme/pack", "SKILL.md", refresh=True)
         assert raised.value.status == 404
         assert "可用的 SKILL.md" in raised.value.message
-        assert "skills/alpha/SKILL.md" in raised.value.message
+        assert set(raised.value.candidates) == {"skills/alpha/SKILL.md", "skills/bravo/SKILL.md"}
 
     def test_candidates_walk_a_prepared_tree(self, wired, tmp_path: Path) -> None:
         root = tmp_path / "tree"

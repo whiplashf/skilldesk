@@ -447,7 +447,10 @@ def create_app(db_path: str | Path | None = None, *, remote_token: str | None = 
                 refresh=bool((body or {}).get("refresh")),
             )
         except installer.InstallError as error:
-            raise HTTPException(error.status, error.message) from error
+            detail = {"message": error.message}
+            if error.candidates:
+                detail["candidates"] = error.candidates
+            raise HTTPException(error.status, detail) from error
 
     @app.post("/api/registry/install")
     async def api_registry_install(request: Request) -> dict:

@@ -55,6 +55,8 @@ export interface InstallPlan {
   host: string;
   repo: string;
   path: string;
+  requestedPath: string;
+  resolved: boolean;
   name: string;
   commit: string;
   license: string;

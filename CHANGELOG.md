@@ -2,6 +2,7 @@
 
 ## 未发布 · 本机技能库
 
+- 粘贴仓库地址即可：仓库里**只有一个 SKILL.md** 时自动定位（提示「已自动定位到 skills/xxx/SKILL.md」），不用手填路径；**多个**时把候选做成 toast 里的一键按钮。服务端 404 的 `detail` 改为结构化 `{message, candidates}`，前端不再丢失候选列表。
 - 修复「点了预览安装没反应」：
   - 服务端当时返回的是 **404（路径不存在）**，但前端把 404 统一翻成“未找到该 skill”，既不对也不显眼；现在原样显示服务端消息，并**列出该仓库里可用的 SKILL.md**（例：`仓库里没有 SKILL.md；可用的 SKILL.md：skills/hallmark/SKILL.md`）。
   - 拉取改为**分级策略**：GitHub 走 tar 包（一次 HTTP），超过 **32 MB 或 45 秒**自动切换成**按文件 API**（有 token 时额度充足）；实测 `Nutlope/hallmark`（仓库大、代理慢）从“几分钟无响应”变为**秒级出预览**。非 GitHub host 仍走 git。
