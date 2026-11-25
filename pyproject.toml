@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "skilldesk"
 version = "0.1.0"
-description = "Manage installed agent skills, read their instructions and track their GitHub releases."
+description = "Manage installed agent skills, track their GitHub releases, and organize reusable prompts."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

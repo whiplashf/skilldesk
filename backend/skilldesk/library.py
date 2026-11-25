@@ -142,13 +142,13 @@ class RevisionConflict(Exception):
 
 
 @contextmanager
-def writing():
+def writing(filename: str = "library.json"):
     directory = config_dir()
     directory.mkdir(parents=True, exist_ok=True)
     lock = sqlite3.connect(directory / "library.lock", timeout=10)
     try:
         lock.execute("BEGIN IMMEDIATE")
-        yield directory / "library.json"
+        yield directory / filename
     finally:
         lock.close()
 

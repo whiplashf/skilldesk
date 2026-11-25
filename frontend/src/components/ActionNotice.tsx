@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { copyText } from '../lib/clipboard';
 
 export interface Notice {
   text: string;
@@ -12,11 +13,8 @@ export function ActionNotice({ note, busy, close }: { note: Notice; busy: boolea
   const [copied, setCopied] = useState('');
   async function copy() {
     if (!note.backup || !path.current) return;
-    try {
-      if (navigator.clipboard) await navigator.clipboard.writeText(note.backup);
-      else { path.current.select(); if (!document.execCommand('copy')) throw new Error(); }
-      setCopied('已复制');
-    } catch { path.current?.select(); setCopied('路径已选中，可手动复制'); }
+    if (await copyText(note.backup)) setCopied('已复制');
+    else { path.current?.select(); setCopied('路径已选中，可手动复制'); }
   }
   return <aside className="library-notice" aria-label="操作结果">
     <span role={note.error ? 'alert' : 'status'}>{note.text}</span>

@@ -1,5 +1,5 @@
 import { getJson, withQuery, writeJson } from './client';
-import type { AISettings, AssetChanges, SkillSummary, UpstreamQuota, VersionStatus } from './types';
+import type { AISettings, AssetChanges, PromptText, SavedPrompt, SkillSummary, UpstreamQuota, VersionStatus } from './types';
 import type {
   Facets,
   MaintenancePreview,
@@ -37,6 +37,11 @@ function skillPath(identityKey: string): string {
 }
 
 export const api = {
+  prompts: (signal?: AbortSignal) => getJson<{ items: SavedPrompt[] }>('/api/prompts', signal),
+  savePrompt: (id: string, draft: PromptText, revision: number) =>
+    writeJson<SavedPrompt>('/api/prompts/' + encodeURIComponent(id), 'PUT', draft, revision),
+  deletePrompt: (item: SavedPrompt) =>
+    writeJson<{ revision: number }>('/api/prompts/' + encodeURIComponent(item.id), 'DELETE', undefined, item.revision),
   installRoots: (signal: AbortSignal) =>
     getJson<{ items: { path: string; label: string }[] }>('/api/maintenance/roots', signal),
   previewInstall: (root: string, repository: string, path: string) =>

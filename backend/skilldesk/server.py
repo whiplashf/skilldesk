@@ -23,7 +23,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import __version__, library, maintenance, placements, translation, upstream
+from . import __version__, library, maintenance, placements, prompts, translation, upstream
 from . import index as index_mod
 from .config import config_path, index_path, load_config
 from .health import KINDS as HEALTH_KINDS
@@ -244,6 +244,7 @@ def create_app(
         if not lan_host or remote_token:
             raise ValueError("局域网免登录模式需要单独绑定本机的局域网 IP")
     app = FastAPI(title="skilldesk", version=__version__, docs_url="/api/docs", redoc_url=None)
+    app.include_router(prompts.router)
     database = Path(db_path) if db_path else index_path()
     try:
         maintenance.recover_pending()

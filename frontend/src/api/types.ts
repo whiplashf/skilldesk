@@ -44,6 +44,9 @@ export interface AISettings {
 }
 export interface AssetChanges { favorite?: boolean; mine?: boolean; github?: GitHubSource | null }
 
+export interface PromptText { title: string; category: string; body: string }
+export interface SavedPrompt extends PromptText { id: string; revision: number; updatedAt: number }
+
 export interface SkillSummary {
   repository: Repository;
   access: { agent: string; scope: string }[];
