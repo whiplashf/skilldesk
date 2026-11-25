@@ -7,8 +7,9 @@ of the real path, ``loc:<sha256[:16]>``.
 
 Confidence is never guessed: ``recorded`` comes from a machine record (the
 ``skills`` CLI lockfile), ``declared`` from the skill itself (``skill-release.json``
-or frontmatter), and everything else stays ``none`` so the UI can ask the user to
-claim it instead of inventing an upstream.
+or frontmatter), ``claimed`` from the user answering the question in the UI, and
+everything else stays ``none`` so the UI can ask the user to claim it instead of
+inventing an upstream.
 """
 from __future__ import annotations
 
@@ -25,10 +26,11 @@ from .config import home
 
 RECORDED = "recorded"
 DECLARED = "declared"
+CLAIMED = "claimed"
 NONE = "none"
 
-CONFIDENCE_LABEL = {RECORDED: "已记录", DECLARED: "已声明", NONE: "待认领"}
-CONFIDENCE_ORDER = {RECORDED: 0, DECLARED: 1, NONE: 2}
+CONFIDENCE_LABEL = {RECORDED: "已记录", DECLARED: "已声明", CLAIMED: "已认领", NONE: "待认领"}
+CONFIDENCE_ORDER = {RECORDED: 0, DECLARED: 1, CLAIMED: 2, NONE: 3}
 
 _HOST_RE = re.compile(r"^[a-z0-9-]+(?:\.[a-z0-9-]+)+(?::\d+)?$", re.IGNORECASE)
 _METADATA_KEYS = ("repository", "repo", "homepage", "url", "source")

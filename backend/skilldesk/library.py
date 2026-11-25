@@ -1,4 +1,10 @@
-"""Durable user annotations, separate from the rebuildable inventory."""
+"""Durable user annotations, separate from the rebuildable inventory.
+
+A claim (``mine`` or a GitHub coordinate) is an annotation that answers a
+question the scanner cannot: "I know where this came from, or that nobody does".
+Readers therefore treat claims as a source of truth about *unrecorded* skills;
+the scanner keeps saying what the machine can prove.
+"""
 
 from __future__ import annotations
 
@@ -74,6 +80,60 @@ def resolved(library: dict, conn: sqlite3.Connection) -> dict:
         row = inventory[key]
         assets[key] = {**assets[key], "realpath": row["realpath"], "contentHash": row["content_hash"]}
     return {**library, "assets": assets}
+
+
+MINE_LABEL = "本地自写"
+
+
+def claim_of(asset: dict) -> dict[str, str]:
+    """The user's own attribution of one asset, if they made one.
+
+    A GitHub coordinate is more specific than "I wrote it", so it wins when both
+    are set. An empty dict means the user has not answered the question.
+    """
+    github = asset.get("github") or {}
+    repo = str(github.get("repo") or "").strip()
+    if repo:
+        return {
+            "kind": "github",
+            "repo": repo,
+            "path": str(github.get("path") or "").strip(),
+            "label": "github.com/" + repo,
+        }
+    if asset.get("mine"):
+        return {"kind": "mine", "repo": "", "path": "", "label": MINE_LABEL}
+    return {}
+
+
+def apply_claim(item: dict, claim: dict[str, str]) -> dict:
+    """Report a claim in place of an empty scan verdict, on any skill payload.
+
+    Shared by the HTTP API and the CLI so both tell the same story: the claim
+    becomes the source, the "unclaimed" warning disappears, and a machine record
+    is never overwritten.
+    """
+    if not claim or item["provenance"]["confidence"] != "none":
+        return item
+    item["provenance"].update(
+        confidence="claimed",
+        label=claim["label"],
+        path=claim["path"],
+        evidence="我写的" if claim["kind"] == "mine" else "用户关联",
+    )
+    item["health"] = [kind for kind in item.get("health", []) if kind != "unclaimed_source"]
+    if "issues" in item:
+        item["issues"] = [issue for issue in item["issues"] if issue["kind"] != "unclaimed_source"]
+    return item
+
+
+def claims(assets: dict) -> dict[str, dict[str, str]]:
+    """One claim per identity key; assets without a claim are left out."""
+    found: dict[str, dict[str, str]] = {}
+    for key, asset in assets.items():
+        claim = claim_of(asset)
+        if claim:
+            found[key] = claim
+    return found
 
 
 class RevisionConflict(Exception):

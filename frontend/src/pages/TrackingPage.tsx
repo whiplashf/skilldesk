@@ -192,7 +192,7 @@ export function TrackingPage({ health, onRetryHealth, onOpenSkill }: TrackingPag
           {message ? <p className="action-message" role="status">{message}</p> : null}
           <p className="page-note">
             悬空软链可直接修复：优先重指到同名实体副本，没有副本时可移除死链。
-            打开待确认来源的条目，可关联 GitHub 仓库或标记为我写的。
+            打开待确认来源的条目：关联 GitHub 仓库或标记为「我写的」，认领后这条警告与计数立即消失。
           </p>
         </div>
       ) : null}

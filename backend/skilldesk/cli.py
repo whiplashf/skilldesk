@@ -13,7 +13,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from . import __version__
+from . import __version__, library
 from . import index as index_mod
 from .config import config_dir, index_path, load_config, state_dir
 from .health import KINDS as HEALTH_KINDS
@@ -41,6 +41,11 @@ def _table(headers: list[str], rows: list[list[str]]) -> str:
     for row in rows:
         lines.append("  ".join(cell.ljust(widths[index]) for index, cell in enumerate(row)))
     return "\n".join(lines)
+
+
+def _claims(conn) -> set[str]:
+    """User claims: the annotations that answer findings the scan left open."""
+    return set(library.claims(library.resolved(library.stored(), conn)["assets"]))
 
 
 def _ensure_index() -> None:
@@ -96,6 +101,7 @@ def cmd_list(args: argparse.Namespace) -> int:
     _ensure_index()
     conn = index_mod.connect(index_path())
     try:
+        assets = library.resolved(library.stored(), conn)["assets"]
         payload = index_mod.list_skills(
             conn,
             q=args.q,
@@ -103,9 +109,12 @@ def cmd_list(args: argparse.Namespace) -> int:
             source=args.source,
             confidence=args.confidence,
             health=args.health,
+            assets=assets,
             limit=args.limit,
             offset=args.offset,
         )
+        for item in payload["items"]:
+            library.apply_claim(item, library.claim_of(assets.get(item["identity_key"], {})))
     finally:
         conn.close()
     if args.json:
@@ -150,11 +159,13 @@ def cmd_show(args: argparse.Namespace) -> int:
             print(render(markdown_body))
             return EXIT_OK
         skill = index_mod.get_skill(conn, args.key)
+        annotations = library.resolved(library.stored(), conn) if skill else {"assets": {}}
     finally:
         conn.close()
     if skill is None:
         print(f"找不到 skill: {args.key}", file=sys.stderr)
         return EXIT_ERROR
+    library.apply_claim(skill, library.claim_of(annotations["assets"].get(skill["identity_key"], {})))
     if args.json:
         _dump(skill)
         return EXIT_OK
@@ -185,9 +196,11 @@ def cmd_health(args: argparse.Namespace) -> int:
     _ensure_index()
     conn = index_mod.connect(index_path())
     try:
-        counts = index_mod.counts(conn)
-        issues = index_mod.list_issues(conn, kind=args.kind, limit=args.limit)
-        facets = index_mod.facets(conn)
+        annotations = library.resolved(library.stored(), conn)
+        claimed = set(library.claims(annotations["assets"]))
+        counts = index_mod.counts(conn, claimed)
+        issues = index_mod.list_issues(conn, kind=args.kind, claimed=claimed, limit=args.limit)
+        facets = index_mod.facets(conn, annotations["assets"])
     finally:
         conn.close()
     if args.json:
@@ -209,7 +222,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     conn = index_mod.connect(index_path())
     try:
         meta = index_mod.meta(conn)
-        counts = index_mod.counts(conn)
+        counts = index_mod.counts(conn, _claims(conn))
         roots = index_mod.list_roots(conn)
     finally:
         conn.close()
@@ -308,7 +321,7 @@ def build_parser() -> argparse.ArgumentParser:
     list_parser.add_argument("--q", default="")
     list_parser.add_argument("--host", default="", help="按宿主根类型过滤: agents/claude/opencode/project/…")
     list_parser.add_argument("--source", default="", help="按来源过滤: host/repo")
-    list_parser.add_argument("--confidence", default="", choices=["", "recorded", "declared", "none"])
+    list_parser.add_argument("--confidence", default="", choices=["", "recorded", "declared", "claimed", "none"])
     list_parser.add_argument("--health", default="", help="按健康问题类型过滤")
     list_parser.add_argument("--limit", type=int, default=50)
     list_parser.add_argument("--offset", type=int, default=0)

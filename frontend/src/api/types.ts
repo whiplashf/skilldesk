@@ -1,6 +1,6 @@
 /** Response shapes of the local FastAPI server. */
 
-export type ConfidenceValue = 'recorded' | 'declared' | 'none';
+export type ConfidenceValue = 'recorded' | 'declared' | 'claimed' | 'none';
 
 export type IssueKind = 'dangling_link' | 'unclaimed_source' | 'duplicate_content';
 

@@ -18,6 +18,7 @@ export function hostKindLabel(kind: string): string {
 const CONFIDENCE_LABELS: Record<string, string> = {
   recorded: '已记录',
   declared: '已声明',
+  claimed: '已认领',
   none: '待认领',
 };
 
@@ -41,6 +42,8 @@ export function confidenceTone(value: string): Tone {
       return 'ok';
     case 'declared':
       return 'warn';
+    case 'claimed':
+      return 'accent';
     default:
       return 'muted';
   }

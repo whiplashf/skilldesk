@@ -6,7 +6,7 @@ import { HASH } from '../lib/route';
 import { FacetGroup } from './FacetGroup';
 import { FacetRow } from './FacetRow';
 
-const CONFIDENCE_ORDER = ['recorded', 'declared', 'none'] as const;
+const CONFIDENCE_ORDER = ['recorded', 'declared', 'claimed', 'none'] as const;
 const HEALTH_ORDER = ['unclaimed_source', 'duplicate_content', 'dangling_link'] as const;
 
 function orderBy(values: ReadonlyArray<string>, order: ReadonlyArray<string>): string[] {

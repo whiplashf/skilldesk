@@ -260,29 +260,43 @@ def create_app(db_path: str | Path | None = None, *, remote_token: str | None = 
     def with_conn():
         return index_mod.connect(database)
 
+    def annotations_for(conn):
+        return library.resolved(library.stored(), conn)
+
+    def claims_for(conn) -> set[str]:
+        return set(library.claims(annotations_for(conn)["assets"]))
+
     def get_installed(key: str):
         conn = with_conn()
         try:
             item = index_mod.get_skill(conn, key)
             if not item:
                 raise HTTPException(404, "本机没有这项 skill")
-            return item, library.resolved(library.stored(), conn)
+            return item, annotations_for(conn)
         finally:
             conn.close()
 
     def decorate(item, annotations):
+        """Attach the user's side of the story to one indexed skill.
+
+        A claim only fills a gap: when the scan has no upstream record, the claim
+        becomes the reported source and its warning goes away. A recorded or
+        declared upstream always wins over the claim.
+        """
         asset = annotations["assets"].get(item["identity_key"], {})
         source = upstream.source_for(item, asset)
+        library.apply_claim(item, library.claim_of(asset))
         item.update(repository=index_mod.repository_for(item["provenance"], asset),
                     favorite=bool(asset.get("favorite")), mine=bool(asset.get("mine")), upstream=source,
                     versionStatus=upstream.previous(item, source), libraryRevision=annotations["revision"])
+        item["confidenceLabel"] = CONFIDENCE_LABEL.get(item["provenance"]["confidence"], "")
         return item
 
     @app.get("/api/library")
     def user_library():
         conn = with_conn()
         try:
-            return library.resolved(library.stored(), conn)
+            return annotations_for(conn)
         finally:
             conn.close()
 
@@ -371,7 +385,7 @@ def create_app(db_path: str | Path | None = None, *, remote_token: str | None = 
         rebuild_index(database)
         conn = with_conn()
         try:
-            return {**result, "counts": index_mod.counts(conn)}
+            return {**result, "counts": index_mod.counts(conn, claims_for(conn))}
         finally:
             conn.close()
 
@@ -469,7 +483,7 @@ def create_app(db_path: str | Path | None = None, *, remote_token: str | None = 
         rebuild_index(database)
         conn = with_conn()
         try:
-            return {**result, "counts": index_mod.counts(conn)}
+            return {**result, "counts": index_mod.counts(conn, claims_for(conn))}
         finally:
             conn.close()
 
@@ -528,7 +542,7 @@ def create_app(db_path: str | Path | None = None, *, remote_token: str | None = 
         rebuild_index(database)
         conn = with_conn()
         try:
-            return {**result, "counts": index_mod.counts(conn)}
+            return {**result, "counts": index_mod.counts(conn, claims_for(conn))}
         finally:
             conn.close()
 
@@ -555,7 +569,7 @@ def create_app(db_path: str | Path | None = None, *, remote_token: str | None = 
         rebuild_index(database)
         conn = with_conn()
         try:
-            return {**result, "counts": index_mod.counts(conn)}
+            return {**result, "counts": index_mod.counts(conn, claims_for(conn))}
         finally:
             conn.close()
 
@@ -603,7 +617,7 @@ def create_app(db_path: str | Path | None = None, *, remote_token: str | None = 
                 "version": __version__,
                 "rescanned": rescanned,
                 "meta": meta,
-                "counts": index_mod.counts(conn),
+                "counts": index_mod.counts(conn, claims_for(conn)),
             }
         finally:
             conn.close()
@@ -625,7 +639,7 @@ def create_app(db_path: str | Path | None = None, *, remote_token: str | None = 
     ) -> dict[str, Any]:
         conn = with_conn()
         try:
-            annotations = library.resolved(library.stored(), conn)
+            annotations = annotations_for(conn)
             result = index_mod.list_skills(
                 conn,
                 q=q, agent=agent, view=view, assets=annotations["assets"],
@@ -647,7 +661,7 @@ def create_app(db_path: str | Path | None = None, *, remote_token: str | None = 
     def api_facets() -> dict[str, Any]:
         conn = with_conn()
         try:
-            data = index_mod.facets(conn)
+            data = index_mod.facets(conn, annotations_for(conn)["assets"])
         finally:
             conn.close()
         data["confidenceLabels"] = CONFIDENCE_LABEL
@@ -671,8 +685,11 @@ def create_app(db_path: str | Path | None = None, *, remote_token: str | None = 
     ) -> dict[str, Any]:
         conn = with_conn()
         try:
-            items = index_mod.list_issues(conn, kind=kind, identity_key=identity_key, limit=limit, offset=offset)
-            total = int(conn.execute("SELECT count(*) FROM health_issue").fetchone()[0])
+            claimed = claims_for(conn)
+            items = index_mod.list_issues(
+                conn, kind=kind, identity_key=identity_key, claimed=claimed, limit=limit, offset=offset
+            )
+            total = index_mod.issue_total(conn, claimed=claimed)
         finally:
             conn.close()
         return {"items": items, "total": total, "limit": limit, "offset": offset, "kinds": HEALTH_KINDS}
@@ -751,7 +768,6 @@ def create_app(db_path: str | Path | None = None, *, remote_token: str | None = 
         frontmatter, markdown_body = split_frontmatter(body)
         skill["frontmatter"] = frontmatter
         skill["html"] = render(markdown_body)
-        skill["confidenceLabel"] = CONFIDENCE_LABEL.get(skill["provenance"]["confidence"], "")
         return decorate(skill, annotations)
 
     if FRONTEND_DIST.is_dir():

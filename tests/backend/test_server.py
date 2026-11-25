@@ -160,3 +160,91 @@ def test_health_auto_rescans_when_the_filesystem_changes(
     payload = client.get("/api/health").json()
     assert payload["rescanned"] is False
     assert payload["counts"]["skills"] == before + 1
+
+
+def _token(client: TestClient) -> dict:
+    return {"X-Skilldesk-Token": client.get("/api/session").json()["token"]}
+
+
+def _claim(client: TestClient, key: str, body: dict):
+    revision = client.get("/api/library").json()["revision"]
+    return client.patch(
+        "/api/assets/" + quote(key, safe=""), headers={**_token(client), "If-Match": str(revision)}, json=body
+    )
+
+
+def test_claim_mine_accounts_for_an_unrecorded_skill(client: TestClient) -> None:
+    before = client.get("/api/health").json()["counts"]
+    assert before["unclaimed"] == 1 and before["issues"] == 2
+
+    beta = key_of(client, "beta")
+    assert _claim(client, beta, {"mine": True}).status_code == 200
+
+    counts = client.get("/api/health").json()["counts"]
+    assert counts["unclaimed"] == 0
+    assert counts["issues"] == 1  # the dangling link is still a real problem
+
+    issues = client.get("/api/issues").json()
+    assert [item["kind"] for item in issues["items"]] == ["dangling_link"]
+    assert issues["total"] == 1
+
+    assert client.get("/api/index", params={"health": "unclaimed_source"}).json()["total"] == 0
+    assert client.get("/api/index", params={"confidence": "none"}).json()["total"] == 0
+    claimed = client.get("/api/index", params={"confidence": "claimed"}).json()
+    assert claimed["total"] == 1 and claimed["items"][0]["identity_key"] == beta
+    assert claimed["items"][0]["health"] == []
+
+    detail = client.get("/api/skill/" + quote(beta, safe="")).json()
+    assert detail["provenance"]["confidence"] == "claimed"
+    assert detail["provenance"]["label"] == "本地自写"
+    assert detail["confidenceLabel"] == "已认领"
+    assert detail["issues"] == []
+
+    facets = client.get("/api/facets").json()
+    assert {entry["value"]: entry["count"] for entry in facets["confidence"]} == {"recorded": 1, "claimed": 1}
+    assert all(entry["value"] != "unclaimed_source" for entry in facets["health"])
+    assert facets["confidenceLabels"]["claimed"] == "已认领"
+
+
+def test_claim_github_supplies_the_missing_upstream(client: TestClient) -> None:
+    beta = key_of(client, "beta")
+    response = _claim(client, beta, {"github": {"repo": "acme/pack", "path": "skills/beta/SKILL.md"}})
+    assert response.status_code == 200
+    assert response.json()["upstream"]["repo"] == "acme/pack"
+
+    detail = client.get("/api/skill/" + quote(beta, safe="")).json()
+    assert detail["provenance"]["label"] == "github.com/acme/pack"
+    assert detail["provenance"]["path"] == "skills/beta/SKILL.md"
+    assert detail["confidenceLabel"] == "已认领"
+    assert detail["issues"] == []
+    assert client.get("/api/health").json()["counts"]["unclaimed"] == 0
+
+
+def test_claim_can_be_withdrawn(client: TestClient) -> None:
+    beta = key_of(client, "beta")
+    assert _claim(client, beta, {"mine": True}).status_code == 200
+    assert _claim(client, beta, {"mine": False}).status_code == 200
+    counts = client.get("/api/health").json()["counts"]
+    assert counts["unclaimed"] == 1 and counts["issues"] == 2
+    detail = client.get("/api/skill/" + quote(beta, safe="")).json()
+    assert detail["provenance"]["confidence"] == "none"
+    assert [issue["kind"] for issue in detail["issues"]] == ["unclaimed_source"]
+
+
+def test_claim_does_not_override_a_machine_record(client: TestClient) -> None:
+    alpha = key_of(client, "alpha")
+    assert _claim(client, alpha, {"mine": True}).status_code == 200
+    detail = client.get("/api/skill/" + quote(alpha, safe="")).json()
+    assert detail["provenance"]["confidence"] == "recorded"
+    assert detail["confidenceLabel"] == "已记录"
+    counts = client.get("/api/health").json()["counts"]
+    assert counts["unclaimed"] == 1  # beta is still unrecorded
+
+
+def test_claim_survives_a_rescan(client: TestClient) -> None:
+    beta = key_of(client, "beta")
+    assert _claim(client, beta, {"mine": True}).status_code == 200
+    assert client.post("/api/scan", headers=_token(client)).status_code == 200
+    counts = client.get("/api/health").json()["counts"]
+    assert counts["unclaimed"] == 0
+    assert client.get("/api/index", params={"confidence": "claimed"}).json()["total"] == 1
