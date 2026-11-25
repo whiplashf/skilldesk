@@ -78,7 +78,7 @@ export function SkillList({
             />
           ) : view === 'mine' || view === 'github' ? (
             <EmptyState title={view === 'mine' ? '还没有标为自写的 skill' : '还没有跟踪的 GitHub skill'}
-              hint={view === 'mine' ? '打开技能的「来源与可用范围」，勾选「我写的」。' : '打开技能的「来源与可用范围」，可以关联它的 GitHub 仓库。'}
+              hint={view === 'mine' ? '打开自己写的本地技能，在「来源与可用范围」勾选「我写的」。' : '打开技能的「来源与可用范围」，可以关联它的 GitHub 仓库。'}
               actionLabel="查看全部技能" actionHref={HASH.library} />
           ) : (
             <div className="state"><h3 className="state-title">本机还没有发现 skill</h3>

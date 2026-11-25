@@ -117,9 +117,17 @@ export function LibraryPage({ selectedKey, onOpenSkill, generation, onScanned }:
       let updated: SkillSummary;
       try { updated = await api.patch(current, changes); }
       catch (err) {
-        if (!(err instanceof ApiError && err.status === 409 && changes.favorite !== undefined)) throw err;
+        if (!(err instanceof ApiError && err.status === 409)) throw err;
         const fresh = await api.skill(item.identity_key);
-        updated = fresh.favorite === changes.favorite ? fresh : await api.patch(fresh, changes);
+        if (changes.favorite !== undefined) {
+          updated = fresh.favorite === changes.favorite ? fresh : await api.patch(fresh, changes);
+        } else {
+          // The revision covers the whole library. An unrelated edit can safely be retried.
+          const sameTracking = current.hasTrackingOverride === fresh.hasTrackingOverride
+            && current.upstream?.repo === fresh.upstream?.repo && current.upstream?.path === fresh.upstream?.path;
+          if (!sameTracking || (changes.mine && current.provenance.confidence !== fresh.provenance.confidence)) throw err;
+          updated = await api.patch(fresh, changes);
+        }
       }
       if (changes.favorite === false) {
         const location = window.location.hash;

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api/endpoints';
 import { ApiError, describeError } from '../api/client';
-import type { MaintenanceResult } from '../api/types';
+import type { GitHubSource, MaintenanceResult } from '../api/types';
 import { accessSummary, healthLabel, VERSION_LABELS } from '../lib/labels';
 import { formatDateTime } from '../lib/format';
 import { OriginEditor, type Save } from './OriginEditor';
@@ -13,6 +13,15 @@ import { ProvenanceBlock } from './ProvenanceBlock';
 import { PlacementsBlock } from './PlacementsBlock';
 import { SkillBody, type DocumentTarget } from './SkillBody';
 import { SupportFiles } from './SupportFiles';
+import { SkillSource } from './SkillSource';
+
+type Source = GitHubSource & { host: string };
+
+function matchesSource(record: Source, source: Source) {
+  const sameRepo = record.host === 'github.com' ? record.repo.toLowerCase() === source.repo.toLowerCase()
+    : record.repo === source.repo;
+  return record.host === source.host && sameRepo && (!record.path || record.path === source.path);
+}
 
 interface Props {
   backHref: string;
@@ -42,10 +51,13 @@ export function SkillDetail({ identityKey, generation, backHref, busy, onSave, o
   const item = detail.state.data;
   const status = item.versionStatus;
   const ai = settings.state.data;
+  const tracked = item.upstream && { ...item.upstream, host: 'github.com' };
+  const scanned = item.provenance;
   const copies = Array.from(new Map(item.placements.filter(p => p.installedSource).map(p => [p.realpath, p])).values());
-  const different = copies.filter(p => p.installedSource && item.upstream &&
-    (p.installedSource.host !== 'github.com' || p.installedSource.repo.toLowerCase() !== item.upstream.repo.toLowerCase()
-      || p.installedSource.path !== item.upstream.path));
+  const different = copies.filter(p => p.installedSource && tracked && !matchesSource(p.installedSource, tracked));
+  const scanDiffers = Boolean(tracked && ['recorded', 'declared'].includes(scanned.confidence)
+    && !matchesSource(scanned, tracked));
+  const scanInCopies = different.some(p => p.installedSource && matchesSource(scanned, p.installedSource));
   const translated = translation?.hash === item.content_hash ? translation.html : undefined;
   const showChinese = chinese && translated !== undefined;
   function editTranslation(open: boolean) {
@@ -75,7 +87,7 @@ export function SkillDetail({ identityKey, generation, backHref, busy, onSave, o
   return <article className="detail">
     <a className="detail-back" href={backHref}>← 返回列表</a>
     <header className="reader-heading">
-      <div><p className="reader-repo" title={item.repository.location}><i className="folder-icon" aria-hidden="true" />{item.repository.name}</p>
+      <div><SkillSource item={item} trackingDiffers={different.length > 0 || scanDiffers} />
         <h1 className="detail-name">{item.name}</h1>
         <p className="reader-access">{accessSummary(item.access)}</p></div>
       <button className="button star-action" type="button" aria-pressed={item.favorite} disabled={busy}
@@ -88,11 +100,10 @@ export function SkillDetail({ identityKey, generation, backHref, busy, onSave, o
       {new Set(item.placements.map(p => p.realpath)).size > 1 && <p className="block-note">
         此次比较使用 <code>{item.realpath}</code>。可在各安装位置预览对应副本的变更。</p>}
       {different.length > 0 && <div className="source-comparison">
-        <p>跟踪来源 <strong>github.com/{item.upstream.repo}</strong> · <code>{item.upstream.path}</code></p>
         {different.map(p => <p key={p.realpath}>此副本安装自 <strong>{p.installedSource!.host}/{p.installedSource!.repo}</strong>
           {' · '}<code>{p.installedSource!.path}</code>。升级使用此安装来源。
           {copies.length > 1 && <small>{p.realpath}</small>}</p>)}</div>}
-      {!copies.length && <p className="block-note">跟踪 {item.upstream.repo}。本机没有可用于升级的 Git 安装记录。</p>}
+      {!copies.length && <p className="block-note">本机没有可用于升级的 Git 安装记录。</p>}
       {status ? <div className={versionError ? 'version-result is-stale' : 'version-result'}>
         {versionError ? <small>上次检查结果 · </small> : null}<strong>{VERSION_LABELS[status.status]}</strong>
         {(status.installed || status.latest) && <span className="mono">{[status.installed, status.latest].filter(Boolean).join(' → ')}</span>}
@@ -103,7 +114,8 @@ export function SkillDetail({ identityKey, generation, backHref, busy, onSave, o
     </section>}
     <details className="reader-fold"><summary>来源与可用范围</summary>
       <OriginEditor data={item} save={onSave} busy={busy} />
-      <ProvenanceBlock provenance={item.provenance} confidenceLabel={item.confidenceLabel} />
+      <ProvenanceBlock provenance={scanned} confidenceLabel={item.confidenceLabel}
+        showScannedSource={scanDiffers && !scanInCopies} showScannedPath={!scanInCopies} />
       <PlacementsBlock placements={item.placements} identityKey={identityKey} onApplied={onMaintenance}
         differingCopies={new Set(different.map(p => p.realpath))} />
       {item.issues.map(issue => <p className="block-note" key={issue.id}>{healthLabel(issue.kind)} · {issue.detail}</p>)}
