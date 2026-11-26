@@ -29,8 +29,9 @@ export function PlacementsBlock({ placements, identityKey, onApplied, differingC
         安装位置 <span className="block-count mono">{placements.length}</span>
       </h3>
       <ul className="placements">
-        {placements.map((placement) => (
-          <li className="placement" key={`${placement.host_root}\u0000${placement.entry}`}>
+        {placements.map(placement => {
+          const actions = placement.actions.filter(action => action !== 'update' || placement.installedSource?.host !== 'github.com');
+          return <li className="placement" key={`${placement.host_root}\u0000${placement.entry}`}>
             <div className="placement-head">
               <Badge tone="neutral" mono>
                 {hostKindLabel(placement.kind)}
@@ -48,16 +49,16 @@ export function PlacementsBlock({ placements, identityKey, onApplied, differingC
               </div>
             ) : null}
             {placement.managementNote && <small className="block-note">{placement.managementNote}</small>}
-            {placement.actions.length > 0 && <div className="placement-actions">
-              {placement.actions.map(action => <button key={action} type="button" className="button"
+            {actions.length > 0 && <div className="placement-actions">
+              {actions.map(action => <button key={action} type="button" className="button"
                 disabled={Boolean(pending)} onClick={() => void preview(placement.entry_path, action)}>
                 {'预览' + actionLabel[action]}{action === 'update' && differingCopies.has(placement.realpath)
                   ? ' · ' + placement.installedSource?.repo : ''}</button>)}
               {pending === placement.entry_path && <span role="status">正在准备预览…</span>}
             </div>}
             {error?.entry === placement.entry_path && <p className="action-message" role="alert">{error.message}</p>}
-          </li>
-        ))}
+          </li>;
+        })}
       </ul>
       {plan && <MaintenancePreview plan={plan} onClose={() => setPlan(undefined)}
         onApplied={result => { setPlan(undefined); onApplied(result); }} />}

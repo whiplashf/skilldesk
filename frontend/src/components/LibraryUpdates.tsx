@@ -1,13 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { describeError } from '../api/client';
 import { api } from '../api/endpoints';
-import type { LibraryUpdateReport } from '../api/types';
+import type { LibraryUpdateReport, MaintenanceResult } from '../api/types';
 import { formatDateTime, toIsoString } from '../lib/format';
 import { VERSION_LABELS } from '../lib/labels';
 import { skillHash } from '../lib/route';
+import { ReleaseUpdate } from './ReleaseUpdate';
+import { ReleaseNotes } from './ReleaseNotes';
 import { Badge } from './Badge';
 
-function Results({ report, close }: { report: LibraryUpdateReport; close: () => void }) {
+type Applied = (result: MaintenanceResult) => void;
+
+function Results({ report, close, onApplied }: { report: LibraryUpdateReport; close: () => void; onApplied: Applied }) {
   const { total, checked, updates, failures, running } = report;
   const attempted = checked + failures.length;
   const remaining = total === null ? 0 : total - attempted;
@@ -15,12 +19,13 @@ function Results({ report, close }: { report: LibraryUpdateReport; close: () => 
   if (running) headline = '正在检查全库…';
   else if (updates.length) headline = updates.length + ' 个技能有更新';
   else if (total === 0) headline = '没有可检查的技能';
-  else if (total === checked && !report.uncertain && !report.error) headline = '可检查的技能均已是最新';
+  else if (total === checked && !report.uncertain && !report.error) headline = '未发现新的正式版';
 
   return <>
     <h3 aria-live="polite">{headline}</h3>
     {total !== null && total > 0 && <p className="update-counts">
       已检查 {checked} / {total} 项
+      {report.noRelease > 0 && ' · ' + report.noRelease + ' 项暂无正式版'}
       {report.uncertain > 0 && ' · ' + report.uncertain + ' 项待确认版本'}
       {failures.length > 0 && ' · ' + failures.length + ' 项失败'}
       {!running && remaining > 0 && ' · ' + remaining + ' 项尚未检查'}
@@ -30,8 +35,10 @@ function Results({ report, close }: { report: LibraryUpdateReport; close: () => 
     {updates.length > 0 && <ul className="update-list">{updates.map(item => <li key={item.key}>
       <a href={skillHash(item.key)} onClick={close}>
         <span><strong>{item.name}</strong><small>{item.repo} · {item.path}</small></span>
-        <Badge tone={item.status === 'release' ? 'ok' : 'neutral'}>{VERSION_LABELS[item.status]}{item.latest && ' · ' + item.latest}</Badge>
+        <Badge tone="ok">{VERSION_LABELS[item.status]}{item.latest && ' · ' + item.latest}</Badge>
       </a>
+      <ReleaseNotes release={item.release} />
+      {item.entries.length > 0 && <ReleaseUpdate identityKey={item.key} entries={item.entries} release={item.release} onApplied={onApplied} />}
     </li>)}</ul>}
     {failures.length > 0 && <details className="update-failures">
       <summary>查看 {failures.length} 项失败原因</summary>
@@ -44,7 +51,7 @@ function Results({ report, close }: { report: LibraryUpdateReport; close: () => 
   </>;
 }
 
-export function LibraryUpdates({ onChecked }: { onChecked: () => void }) {
+export function LibraryUpdates({ onChecked, onApplied, generation }: { onChecked: () => void; onApplied: Applied; generation: string }) {
   const [report, setReport] = useState<LibraryUpdateReport | null>(null);
   const [open, setOpen] = useState(false);
   const [starting, setStarting] = useState(false);
@@ -55,6 +62,7 @@ export function LibraryUpdates({ onChecked }: { onChecked: () => void }) {
   const resultButton = useRef<HTMLButtonElement>(null);
   const observedRun = useRef(false);
   const onFinished = useRef(onChecked);
+  useEffect(() => { setRequest({ start: false }); }, [generation]);
   useEffect(() => { onFinished.current = onChecked; }, [onChecked]);
 
   useEffect(() => {
@@ -100,7 +108,7 @@ export function LibraryUpdates({ onChecked }: { onChecked: () => void }) {
   }
 
   return <div className="check-updates" ref={container} onKeyDown={e => {
-    if (e.key === 'Escape' && open) { e.preventDefault(); close(); }
+    if (e.key === 'Escape' && open && !(e.target instanceof Element && e.target.closest('dialog'))) { e.preventDefault(); close(); }
   }}>
     <button className="button check-all" type="button" ref={trigger} disabled={starting || report?.running}
       title="检查本机所有已关联 GitHub 来源的技能" onClick={() => {
@@ -113,7 +121,7 @@ export function LibraryUpdates({ onChecked }: { onChecked: () => void }) {
       }}>{report.running ? '进度' : '结果'}{report.updates.length > 0 && ' · ' + report.updates.length}</button>}
     {open && <section className="update-panel" aria-label="全库版本检查">
       <header><h2>全库版本检查</h2><button type="button" className="link-button" onClick={close}>收起</button></header>
-      {starting ? <p role="status">正在读取本机技能…</p> : report && <Results report={report} close={close} />}
+      {starting ? <p role="status">正在读取本机技能…</p> : report && <Results report={report} close={close} onApplied={onApplied} />}
       {error && <p className="update-error" role="alert">{error} <button type="button" className="link-button"
         onClick={() => setRequest({ start: false })}>重新读取结果</button></p>}
       {!starting && !report && !error && <p>尚未进行全库检查。</p>}

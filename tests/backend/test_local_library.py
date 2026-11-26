@@ -152,47 +152,6 @@ def test_unconfigured_translation_and_private_settings(app_client, monkeypatch):
     assert data["enabled"] and data["hasKey"] and "sample" not in json.dumps(data)
 
 
-@pytest.mark.parametrize(
-    ("baseline", "released", "scope_tag", "expected"),
-    [
-        ("same", "same", "v1.2", "current"),
-        ("old", "old", "v1.2", "changed"),
-        ("old", "new", "v1.2", "release"),
-        ("old", "new", "alpha@v2.0", "release"),
-        ("old", "old", "alpha@v2.0", "changed"),
-        ("old", "new", "unrelated@v1.2", "changed"),
-    ],
-)
-def test_github_release_requires_skill_evidence(tmp_path, baseline, released, scope_tag, expected):
-    upstream.forget_caches()  # each case models a different upstream state
-    directory = write_skill(tmp_path, "alpha")
-    item = {"name": "alpha", "dir_name": "alpha", "realpath": str(directory)}
-    source = {"repo": "owner/repo", "path": "skills/alpha/SKILL.md", "ref": "base"}
-
-    def get(endpoint, params):
-        if endpoint == "":
-            return {"default_branch": "main"}
-        if endpoint == "commits/main":
-            return {"sha": "head"}
-        if endpoint.endswith("SKILL.md"):
-            return {"type": "file"}
-        if endpoint == "contents/skills":
-            return [
-                {
-                    "name": "alpha",
-                    "type": "dir",
-                    "sha": {"head": "same", "base": baseline, scope_tag: released}[params["ref"]],
-                }
-            ]
-        if endpoint == "releases":
-            return [{"tag_name": scope_tag, "html_url": "https://github.com/owner/repo/releases"}]
-        if endpoint.startswith("compare/"):
-            return {"status": "ahead"}
-        raise AssertionError(endpoint)
-
-    assert upstream.evaluate(item, source, get)["status"] == expected
-
-
 def test_manual_and_batch_checks_share_only_this_requests_evidence(fake_home, monkeypatch):
     from collections import Counter
 
@@ -206,17 +165,17 @@ def test_manual_and_batch_checks_share_only_this_requests_evidence(fake_home, mo
     monkeypatch.setenv("SKILLDESK_GITHUB_TOKEN", "fixture")
     calls = Counter()
     releases = []
-    head_tree = "b" * 40
+    published = "d" * 40
 
     def respond(request):
         endpoint = request.url.path.removeprefix("/repos/owner/pack").strip("/")
         calls[endpoint] += 1
         data = {
-            "": {"default_branch": "main"}, "commits/main": {"sha": "head"},
-            "git/trees/head": {"tree": [
-                obj for n in names for obj in ({"path": n, "type": "tree", "sha": head_tree},
-                                               {"path": n + "/SKILL.md", "type": "blob"})
-            ]}, "releases": releases,
+            "releases": releases, "git/ref/tags/v2": {"object": {"type": "commit", "sha": published}},
+            "git/trees/" + published: {"sha": "root", "tree": [
+                obj for n in names for obj in ({"path": n, "type": "tree", "sha": "c" * 40},
+                                               {"path": n + "/SKILL.md", "type": "blob"})]},
+            "compare/" + "a" * 40 + "..." + published: {"status": "ahead"},
         }
         return httpx.Response(200, json=data[endpoint])
 
@@ -227,14 +186,14 @@ def test_manual_and_batch_checks_share_only_this_requests_evidence(fake_home, mo
         def single():
             return client.post("/api/check", headers=headers, json={"identity_key": keys[0], "force": True}).json()
 
-        assert single()["status"] == "current"
-        head_tree = "c" * 40
-        assert single()["status"] == "changed"
-        releases.extend({"tag_name": n + "@v2.0", "html_url": "https://example.invalid/v2"} for n in names)
+        assert single()["status"] == "no_release"
+        assert calls == {"releases": 1}
+        releases.append({"tag_name": "v2", "body": "New instructions for both skills."})
         calls.clear()
         result = client.post("/api/check-batch", headers=headers, json={"keys": keys}).json()["items"]
         assert [row["result"]["status"] for row in result] == ["release", "release"]
-        assert calls == {"": 1, "commits/main": 1, "git/trees/head": 1, "releases": 1}
+        assert calls == {"releases": 1, "git/ref/tags/v2": 1, "git/trees/" + published: 1,
+                         "compare/" + "a" * 40 + "..." + published: 1}
         assert len({row["result"]["checkedAt"] for row in result}) == 1
         calls.clear()
         assert client.get("/api/check-all").json() is None
@@ -243,9 +202,10 @@ def test_manual_and_batch_checks_share_only_this_requests_evidence(fake_home, mo
         report = client.get("/api/check-all").json()
         assert report["total"] == report["checked"] == 2 and not report["running"]
         assert [(r["key"], r["status"]) for r in report["updates"]] == [(k, "release") for k in keys]
-        assert calls == {"": 1, "commits/main": 1, "git/trees/head": 1, "releases": 1}
+        assert calls == {"releases": 1, "git/ref/tags/v2": 1, "git/trees/" + published: 1,
+                         "compare/" + "a" * 40 + "..." + published: 1}
         releases.clear()
-        assert single()["status"] == "changed" and calls["releases"] == 2
+        assert single()["status"] == "no_release" and calls["releases"] == 2
         before_failure = client.get("/api/skill/" + keys[0]).json()["versionStatus"]
         def unavailable(request):
             return httpx.Response(429)
@@ -302,20 +262,16 @@ def test_scoped_release_and_recorded_tree(tmp_path):
 
     def get(endpoint, params):
         return {
-            "": {"default_branch": "main"},
-            "commits/main": {"sha": "head"},
-            "contents/skills/alpha/SKILL.md": {"type": "file"},
-            "contents/skills": [{"type": "dir", "name": "alpha", "sha": "head-tree"}],
-            "releases": [{"tag_name": "v5.0"}, {"tag_name": "alpha@v1.2.0"}],
+            "git/ref/tags/alpha%40v1.2.0": {"object": {"type": "commit", "sha": "d" * 40}},
+            "git/trees/" + "d" * 40: {"sha": "root", "tree": [
+                {"type": "tree", "path": "skills/alpha", "sha": "new"},
+                {"type": "blob", "path": "skills/alpha/SKILL.md"}]},
+            "releases": [{"tag_name": "beta@v5.0"}, {"tag_name": "alpha@v1.2.0"}],
         }[endpoint]
 
     status = upstream.evaluate(item, source, get)
     assert (status["status"], status["latest"]) == ("release", "alpha@v1.2.0")
-    upstream.forget_caches()  # the second scenario has no releases at all
-    assert (
-        upstream.evaluate(item, source, lambda e, p: [] if e == "releases" else get(e, p))["status"]
-        == "changed"
-    )
+    assert upstream.evaluate(item, source, lambda e, p: [], fresh=True)["status"] == "no_release"
 
 
 def test_open_original_includes_frontmatter(app_client):

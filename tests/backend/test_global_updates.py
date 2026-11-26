@@ -26,8 +26,9 @@ def test_global_run_uses_effective_sources_and_preserves_partial_results(fake_ho
             raise ValueError("仓库无法访问")
         if item["name"] == "e-quota":
             raise upstream.QuotaExhausted(int(time.time()) + 300)
-        status = {"a-mine": "release", "b-drift": "changed", "c-baseline": "baseline"}[item["name"]]
-        return {"status": status, "latest": "v2" if status == "release" else ""}
+        status = {"a-mine": "release", "b-drift": "no_release", "c-baseline": "unknown"}[item["name"]]
+        return {"status": status, "latest": "v2" if status == "release" else "",
+                "release": {"tag": "v2", "commit": "a" * 40, "body": "Release notes"}}
 
     monkeypatch.setattr(upstream, "check", check)
     with TestClient(create_app()) as client:
@@ -40,7 +41,8 @@ def test_global_run_uses_effective_sources_and_preserves_partial_results(fake_ho
         report = client.get("/api/check-all").json()
         assert calls == [(names[0], "me/project"), *((name, "example/source") for name in names[1:5])]
         assert (report["total"], report["untracked"], report["checked"], report["uncertain"]) == (6, 2, 3, 1)
-        assert [(row["name"], row["status"]) for row in report["updates"]] == [("a-mine", "release"), ("b-drift", "changed")]
+        assert [(row["name"], row["status"]) for row in report["updates"]] == [("a-mine", "release")]
+        assert report["noRelease"] == 1 and report["updates"][0]["release"]["body"] == "Release notes"
         assert [f["name"] for f in report["failures"]] == names[3:5]
         assert "额度已用完" in report["error"] and report["finishedAt"] > 0 and not report["running"]
 

@@ -2,9 +2,10 @@ import re
 import subprocess
 import threading
 
+import httpx
 import pytest
 from playwright.sync_api import expect
-from skilldesk import packages
+from skilldesk import packages, upstream
 
 
 @pytest.fixture
@@ -115,3 +116,84 @@ def test_cancel_discards_a_late_result_and_keeps_the_new_address(page, repositor
     expect(tab.get_by_role("dialog", name="安装预览")).to_be_visible()
     expect(tab.get_by_role("heading", name=re.compile("找到 .* 个技能"))).to_have_count(0)
     expect(address).to_have_value(repository + "/tree/main")
+
+
+@pytest.mark.parametrize("width", [1280, 390])
+def test_read_release_notes_preview_cancel_and_apply_pinned_release(page, repository, fake_home, tmp_path, monkeypatch, width):
+    tab, _ = page
+    tab.set_viewport_size({"width": width, "height": 850})
+    repo = tmp_path / "remote"
+    def git(*args):
+        return subprocess.run(["git", "-C", str(repo), "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+                               *args], check=True, capture_output=True, text=True).stdout.strip()
+    base = git("rev-parse", "HEAD")
+    release_list = []
+    responses = {"releases": release_list}
+    def respond(request):
+        path = request.url.path.removeprefix("/repos/example/tools/")
+        return httpx.Response(200, json=responses[path])
+    monkeypatch.setenv("SKILLDESK_GITHUB_TOKEN", "fixture")
+    monkeypatch.setattr(upstream, "http_client", lambda **kw: httpx.Client(transport=httpx.MockTransport(respond)))
+    tab.goto("/#/settings?section=install")
+    tab.get_by_label("仓库地址").fill(repository)
+    tab.get_by_role("button", name="查找技能").click()
+    tab.get_by_role("button", name="确认安装").click()
+    tab.get_by_role("link", name="在技能库查看").click()
+    tab.get_by_role("button", name="检查版本").click()
+    detail = tab.locator(".detail-pane .detail")
+    expect(detail.locator(".version-result")).to_contain_text("暂无正式版")
+    expect(detail.get_by_role("button", name=re.compile("^更新至"))).to_have_count(0)
+
+    doc = "agent_reach/skill/SKILL.md"
+    original = (repo / doc).read_text()
+    (repo / doc).write_text(original + "Published changes.")
+    git("commit", "-qam", "Release")
+    published = git("rev-parse", "HEAD")
+    git("tag", "v2", published)
+    tree = git("rev-parse", "HEAD:agent_reach/skill")
+    (repo / doc).write_text(original + "Unreleased changes.")
+    git("commit", "-qam", "Ongoing development")
+    notes = "Adds offline examples.\n" + "Details.\n" * 8 + "<b>Last line</b>"
+    release_list.append({"tag_name": "v2", "name": "Offline support", "body": notes,
+                         "published_at": "2026-04-05T10:20:00Z"})
+    responses.update({
+        "git/ref/tags/v2": {"object": {"type": "commit", "sha": published}},
+        "git/trees/" + published: {"sha": "root", "tree": [{"type": "tree", "path": "agent_reach/skill", "sha": tree},
+                                                          {"type": "blob", "path": doc}]},
+        "compare/" + base + "..." + published: {"status": "ahead"},
+    })
+    # Start from the catalog so this also works on narrow screens with a dedicated reader.
+    tab.get_by_role("link", name="本机技能库", exact=True).click()
+    tab.get_by_role("button", name="检查全部更新").click()
+    panel = tab.get_by_role("region", name="全库版本检查")
+    expect(panel.get_by_text("Offline support")).to_be_visible()
+    expect(panel.get_by_role("button", name="更新至 v2")).to_be_visible()
+    panel.get_by_role("link", name=re.compile("^agent-reach")).click()
+    expect(detail.get_by_text("Offline support")).to_be_visible()
+    expect(detail.get_by_role("link", name="GitHub 原文")).to_have_attribute("href", repository + "/releases/tag/v2")
+    detail.get_by_role("button", name="展开完整说明").click()
+    expect(detail.locator(".release-body")).to_contain_text("<b>Last line</b>")
+    expect(detail.locator(".release-body b")).to_have_count(0)
+    detail.get_by_role("button", name="收起说明").click()
+    action = detail.get_by_role("button", name="更新至 v2")
+    action.click()
+    dialog = tab.get_by_role("dialog", name="更新至 v2")
+    expect(dialog.get_by_text(published)).to_be_visible()
+    dialog.get_by_role("button", name="取消").click()
+    local = fake_home / ".agents/skills/agent-reach/SKILL.md"
+    assert local.read_text() == original
+    if width == 390:
+        tab.get_by_role("link", name="本机技能库", exact=True).click()
+        tab.get_by_role("button", name="查看全库检查结果").click()
+        panel.get_by_role("button", name="更新至 v2").click()
+    else:
+        action.click()
+    dialog.get_by_role("button", name="确认更新").click()
+    if width == 390:
+        expect(panel.get_by_role("heading", name="未发现新的正式版")).to_be_visible()
+        panel.get_by_role("button", name="收起", exact=True).click()
+        tab.get_by_role("button", name=re.compile("^agent-reach")).click()
+    expect(detail.locator(".version-result")).to_contain_text("已是最新")
+    expect(action).to_have_count(0)
+    assert local.read_text() == original + "Published changes."
+    assert tab.evaluate("document.documentElement.scrollWidth <= window.innerWidth")

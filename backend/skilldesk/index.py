@@ -294,12 +294,13 @@ def counts(conn: sqlite3.Connection, claimed: set[str] | frozenset[str] = frozen
 _ITEM_SQL = """
 SELECT s.identity_key, s.name, s.dir_name, s.description, s.license, s.content_hash,
        s.bytes, s.lines, s.mtime, s.realpath, s.primary_kind,
-       p.host, p.repo, p.path, p.ref, p.tree, p.local_root, p.checkout_remote, p.provider, p.source_label, p.confidence, p.evidence,
+       p.host, p.repo, p.path, p.ref, p.tree, p.installed_at, p.local_root, p.checkout_remote, p.provider, p.source_label, p.confidence, p.evidence,
        (SELECT json_group_array(DISTINCT json_object('agent', a.agent, 'scope', a.scope))
         FROM placement pl JOIN agent_access a ON pl.host_root = a.host_root
         WHERE pl.identity_key = s.identity_key) AS access,
        (SELECT group_concat(pl.kind) FROM placement pl WHERE pl.identity_key = s.identity_key) AS kinds,
        (SELECT count(*) FROM placement pl WHERE pl.identity_key = s.identity_key) AS placement_count,
+       (SELECT count(DISTINCT pl.realpath) FROM placement pl WHERE pl.identity_key = s.identity_key) AS copy_count,
        (SELECT group_concat(DISTINCT h.kind) FROM health_issue h WHERE h.identity_key = s.identity_key) AS issues
 FROM skill s LEFT JOIN provenance p ON p.identity_key = s.identity_key
 """
@@ -322,6 +323,7 @@ def _row_to_item(row: sqlite3.Row) -> dict[str, Any]:
         "host_kinds": sorted({kind for kind in (row["kinds"] or "").split(",") if kind}),
         "access": json.loads(row["access"]),
         "placement_count": row["placement_count"],
+        "copy_count": row["copy_count"],
         "health": sorted({kind for kind in (row["issues"] or "").split(",") if kind}),
         "provenance": {
             "host": row["host"] if "host" in keys else "",

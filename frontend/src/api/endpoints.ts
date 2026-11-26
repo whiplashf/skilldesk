@@ -49,8 +49,8 @@ export const api = {
     getJson<{ items: { path: string; label: string }[] }>('/api/maintenance/roots', signal),
   previewInstall: (root: string, repository: string, path: string, signal?: AbortSignal) =>
     writeJson<MaintenancePreview>('/api/maintenance/install-preview', 'POST', { root, repository, path }, undefined, signal),
-  previewPlacement: (identity_key: string, entry: string, action: PlacementAction) =>
-    writeJson<MaintenancePreview>('/api/maintenance/placement-preview', 'POST', { identity_key, entry, action }),
+  previewPlacement: (identity_key: string, entry: string, action: PlacementAction, release?: { tag: string; commit: string }) =>
+    writeJson<MaintenancePreview>('/api/maintenance/placement-preview', 'POST', { identity_key, entry, action, release }),
   previewDangling: (entry: string) =>
     writeJson<MaintenancePreview>('/api/maintenance/dangling-preview', 'POST', { entry }),
   confirm: (id: string, accept_license: boolean, accept_local: boolean) =>

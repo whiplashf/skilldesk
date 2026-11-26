@@ -8,10 +8,11 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from helpers import lock_entry, write_lockfile, write_skill
-from skilldesk import maintenance
+from skilldesk import maintenance, upstream
 from skilldesk.library import read_json, write_json
 from skilldesk.packages import MaintenanceError, Source
 from skilldesk.placements import lock_path
@@ -20,6 +21,8 @@ from skilldesk.server import create_app
 REPO = "test/collection"
 ALPHA = "skills/alpha/SKILL.md"
 KEY = "src:github.com/test/collection@" + ALPHA
+GIT = "https://git.example/test/collection.git"
+GIT_KEY = "src:git.example/test/collection@" + ALPHA
 
 
 def git(repo, *args):
@@ -45,7 +48,9 @@ def remote(fake_home, tmp_path, monkeypatch):
     (alpha / "check.sh").chmod(0o755)
     write_skill(repo / "skills", "beta")
     commit(repo)
-    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "2")
+    monkeypatch.setenv("GIT_CONFIG_KEY_1", "url." + repo.as_uri() + ".insteadOf")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_1", GIT)
     monkeypatch.setenv("GIT_CONFIG_KEY_0", "url." + repo.as_uri() + ".insteadOf")
     monkeypatch.setenv("GIT_CONFIG_VALUE_0", "https://github.com/test/collection.git")
     # Even a malformed fixture must never use a network or ask for credentials.
@@ -68,8 +73,8 @@ def good(response):
     return response.json()
 
 
-def install(client, root, path=ALPHA):
-    p = good(post(client, "install-preview", repository=REPO, path=path, root=str(root)))
+def install(client, root, path=ALPHA, repository=REPO):
+    p = good(post(client, "install-preview", repository=repository, path=path, root=str(root)))
     return p, good(post(client, "confirm", id=p["id"], accept_license=True))
 
 
@@ -79,18 +84,18 @@ def change(client, entry, action, key=KEY):
 
 def test_current_and_metadata_only_updates_do_not_replace_files(remote, client, fake_home):
     root = fake_home / ".agents/skills"
-    install(client, root)
+    install(client, root, repository=GIT)
     path = root / "alpha"
     lock = lock_path(root)
     before = lock.read_bytes()
     original = (path.stat().st_ino, (path / "SKILL.md").stat().st_ino)
-    current = good(change(client, path, "update"))
+    current = good(change(client, path, "update", GIT_KEY))
     assert current["outcome"] == "current" and current["backup"] == ""
     assert good(post(client, "confirm", id=current["id"]))["outcome"] == "current"
     assert lock.read_bytes() == before
     (remote / "other.txt").write_text("unrelated change")
     next_commit = commit(remote)
-    plan = good(change(client, path, "update"))
+    plan = good(change(client, path, "update", GIT_KEY))
     assert plan["outcome"] == "record" and plan["backup"] == ""
     receipt = good(post(client, "confirm", id=plan["id"]))
     assert good(post(client, "confirm", id=plan["id"])) == receipt
@@ -165,8 +170,8 @@ def test_project_and_global_same_skill_update_exact_copy_and_preserve_lock_field
     monkeypatch.setenv("SKILLDESK_PROJECTS", str(project))
     global_root = fake_home / ".agents/skills"
     project_root = project / ".agents/skills"
-    install(client, global_root)
-    install(client, project_root)
+    install(client, global_root, repository=GIT)
+    install(client, project_root, repository=GIT)
     old = (global_root / "alpha/SKILL.md").read_bytes()
     lock = project / "skills-lock.json"
     metadata = read_json(lock, {})
@@ -176,7 +181,7 @@ def test_project_and_global_same_skill_update_exact_copy_and_preserve_lock_field
     write_json(lock, metadata)
     (remote / ALPHA).write_bytes(old + b"\nVersion two\n")
     commit(remote)
-    p = good(change(client, project_root / "alpha", "update"))
+    p = good(change(client, project_root / "alpha", "update", GIT_KEY))
     assert p["changes"]["changed"] == ["SKILL.md"] and p["localState"] == "clean"
     # HEAD advances after preview; confirmation still installs the displayed commit.
     (remote / ALPHA).write_bytes(b"later unpublished bytes")
@@ -192,23 +197,23 @@ def test_project_and_global_same_skill_update_exact_copy_and_preserve_lock_field
         actual["skills"]["alpha"]["installedAt"] == installed
         and actual["skills"]["alpha"]["commit"] == p["commit"]
     )
-    assert change(client, tmp_path / "alpha", "uninstall").status_code == 409
+    assert change(client, tmp_path / "alpha", "uninstall", GIT_KEY).status_code == 409
 
 
 def test_preview_rechecks_drift_and_lock_before_confirm(remote, client, fake_home):
     root = fake_home / ".agents/skills"
-    install(client, root)
+    install(client, root, repository=GIT)
     local = root / "alpha"
-    p = good(change(client, local, "update"))
+    p = good(change(client, local, "update", GIT_KEY))
     (local / "my-notes").write_text("keep")
     refused = post(client, "confirm", id=p["id"], accept_local=True)
     assert refused.status_code == 409 and (local / "my-notes").read_text() == "keep"
-    after = good(change(client, local, "uninstall"))
+    after = good(change(client, local, "uninstall", GIT_KEY))
     assert after["localState"] == "modified" and "my-notes" in after["changes"]["removed"]
     assert post(client, "confirm", id=after["id"]).status_code == 400
     lock = lock_path(fake_home / ".agents/skills")
     data = read_json(lock, {})
-    data["skills"]["alpha"]["sourceUrl"] = "https://git.example/test/collection.git"
+    data["skills"]["alpha"]["sourceUrl"] = "https://git.example/test/replacement.git"
     write_json(lock, data)
     assert post(client, "confirm", id=after["id"], accept_local=True).status_code == 409
     assert local.is_dir()
@@ -255,12 +260,12 @@ def test_uninstall_protects_link_users_then_archives_physical_copy(remote, clien
 @pytest.mark.parametrize("failure", ["stage", "promote", "backup", "metadata"])
 def test_failed_update_keeps_original_files_and_metadata(failure, remote, client, fake_home, monkeypatch):
     root = fake_home / ".agents/skills"
-    install(client, root)
+    install(client, root, repository=GIT)
     entry = root / "alpha"
     before = (entry / "SKILL.md").read_bytes()
     (remote / ALPHA).write_bytes(before + b" change")
     commit(remote)
-    plan = good(change(client, entry, "update"))
+    plan = good(change(client, entry, "update", GIT_KEY))
     lock = lock_path(fake_home / ".agents/skills")
     record = lock.read_bytes()
     if failure in {"stage", "backup"}:
@@ -373,11 +378,11 @@ def test_branch_home_finds_single_nested_document_and_tracks_that_branch(remote,
     assert read_json(lock_path(root), {})["skills"]["agent-reach"]["ref"] == "refs/heads/release/preview"
     git(remote, "checkout", "release/preview")
     doc.write_text(doc.read_text() + "Next release")
-    advanced = commit(remote)
+    commit(remote)
     git(remote, "checkout", "-")
     key = "src:github.com/test/collection@agent_reach/skill/SKILL.md"
-    update = good(change(client, root / "agent-reach", "update", key))
-    assert update["commit"] == advanced and update["changes"]["changed"] == ["SKILL.md"]
+    unpublished = change(client, root / "agent-reach", "update", key)
+    assert unpublished.status_code == 409 and "Release" in unpublished.json()["detail"]
 
 
 def test_tree_and_blob_links_respect_scope_and_tag(remote, client, fake_home):
@@ -440,12 +445,12 @@ def test_reject_outside_links_and_symlinked_store(remote, client, fake_home, tmp
 
 def test_restart_recovers_interrupted_update(remote, client, fake_home, monkeypatch):
     root = fake_home / ".agents/skills"
-    install(client, root)
+    install(client, root, repository=GIT)
     entry = root / "alpha"
     old = (entry / "SKILL.md").read_bytes()
     (remote / ALPHA).write_bytes(old + b" new")
     commit(remote)
-    preview = good(change(client, entry, "update"))
+    preview = good(change(client, entry, "update", GIT_KEY))
     lock = lock_path(fake_home / ".agents/skills")
     before = json.loads(lock.read_text())
     write = maintenance.write_json
@@ -471,7 +476,7 @@ def test_restart_recovers_interrupted_update(remote, client, fake_home, monkeypa
 
 def test_keep_configured_tracking_branch_and_annotated_tag(remote, client, fake_home):
     root = fake_home / ".agents/skills"
-    install(client, root)
+    install(client, root, repository=GIT)
     fixed = git(remote, "rev-parse", "HEAD")
     git(remote, "branch", "stable", fixed)
     git(
@@ -493,7 +498,7 @@ def test_keep_configured_tracking_branch_and_annotated_tag(remote, client, fake_
         data = read_json(lock, {})
         data["skills"]["alpha"]["ref"] = ref
         write_json(lock, data)
-        plan = good(change(client, root / "alpha", "update"))
+        plan = good(change(client, root / "alpha", "update", GIT_KEY))
         assert plan["commit"] == fixed
         good(post(client, "confirm", id=plan["id"]))
         assert "Release one" in (root / "alpha/SKILL.md").read_text()
@@ -528,3 +533,78 @@ def test_legacy_project_lock_preserves_version_and_computes_native_digest(
         data["skills"]["beta"]["computedHash"]
         == hashlib.sha256(b"SKILL.md" + (remote / "skills/beta/SKILL.md").read_bytes()).hexdigest()
     )
+
+
+@pytest.mark.parametrize("two_copies", [False, True])
+def test_github_release_update_installs_exact_edition_and_clears_report(
+    remote, client, fake_home, tmp_path, monkeypatch, two_copies
+):
+    root = fake_home / ".agents/skills"
+    project = tmp_path / "project"
+    second = project / ".agents/skills/alpha"
+    if two_copies:
+        project.mkdir()
+        monkeypatch.setenv("SKILLDESK_PROJECTS", str(project))
+        install(client, second.parent)
+    first, _ = install(client, root)
+    target = root / "alpha"
+    old = (target / "SKILL.md").read_text()
+    (remote / ALPHA).write_text(old + "Published instructions.")
+    published = commit(remote)
+    tree = git(remote, "rev-parse", published + ":skills/alpha")
+    git(remote, "tag", "v2", published)
+    (remote / ALPHA).write_text("Unpublished instructions.")
+    commit(remote)
+    release = {"tag_name": "v2", "name": "Second edition", "body": "Improved setup steps."}
+    def respond(request):
+        endpoint = request.url.path.removeprefix("/repos/" + REPO + "/")
+        payload = {
+            "releases": [release], "git/ref/tags/v2": {"object": {"type": "commit", "sha": published}},
+            "git/trees/" + published: {"sha": "root", "tree": [{"type": "tree", "path": "skills/alpha", "sha": tree},
+                                                               {"type": "blob", "path": ALPHA}]},
+            "compare/" + first["commit"] + "..." + published: {"status": "ahead"},
+        }
+        return httpx.Response(200, json=payload[endpoint])
+    monkeypatch.setenv("SKILLDESK_GITHUB_TOKEN", "fixture")
+    monkeypatch.setattr(upstream, "http_client", lambda **kw: httpx.Client(transport=httpx.MockTransport(respond)))
+    headers = {"X-Skilldesk-Token": client.get("/api/session").json()["token"]}
+    client.post("/api/check-all", headers=headers).raise_for_status()
+    row, = good(client.get("/api/check-all"))["updates"]
+    assert row["release"]["body"] == release["body"] and row["release"]["commit"] == published
+    assert set(row["entries"]) == ({str(target), str(second)} if two_copies else {str(target)})
+    def preview(tag="v2", sha=published, entry=target):
+        return post(client, "placement-preview", identity_key=KEY, entry=str(entry),
+                    action="update", release={"tag": tag, "commit": sha})
+    assert change(client, target, "update").status_code == 409
+    assert preview(sha=git(remote, "rev-parse", "HEAD")).status_code == 409
+    assert preview(tag="v3").status_code == 409
+    release["prerelease"] = True
+    assert preview().status_code == 409
+    release["prerelease"] = False
+    if not two_copies:
+        obsolete = good(preview())
+        slot = maintenance.plans() / obsolete["id"] / "plan.json"
+        legacy = read_json(slot, {})
+        del legacy["report"]["release"]
+        write_json(slot, legacy)
+        assert post(client, "confirm", id=obsolete["id"]).status_code == 410
+    plan = good(preview())
+    assert plan["commit"] == published and plan["release"]["tag"] == "v2"
+    assert plan["changes"]["changed"] == ["SKILL.md"] and (target / "SKILL.md").read_text() == old
+    result = good(post(client, "confirm", id=plan["id"]))
+    assert (target / "SKILL.md").read_text() == old + "Published instructions."
+    assert (Path(result["backup"]) / "SKILL.md").read_text() == old
+    assert read_json(lock_path(root), {})["skills"]["alpha"]["commit"] == published
+    assert good(post(client, "confirm", id=plan["id"])) == result
+    if two_copies:
+        unresolved, = good(client.get("/api/check-all"))["updates"]
+        assert unresolved["entries"] == [str(second)]
+        assert good(client.get("/api/skill/" + KEY))["versionStatus"]["entries"] == [str(second)]
+        assert (second / "SKILL.md").read_text() == old
+        assert preview().status_code == 409
+        other = good(preview(entry=second))
+        good(post(client, "confirm", id=other["id"]))
+        assert (second / "SKILL.md").read_text() == old + "Published instructions."
+    assert good(client.get("/api/skill/" + KEY))["versionStatus"]["status"] == "current"
+    assert not good(client.get("/api/check-all"))["updates"]
+    assert preview().status_code == 409

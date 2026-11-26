@@ -114,8 +114,10 @@ def test_global_updates_include_hidden_skills_and_preserve_library_position(page
 
     def check(item, source, force, *, batch):
         calls.append(item["name"])
-        status = {"left-01": "changed", "right-00": "release"}.get(item["name"], "current")
-        return {"status": status, "latest": "v2.0" if status == "release" else ""}
+        status = {"left-01": "no_release", "right-00": "release"}.get(item["name"], "current")
+        return {"status": status, "latest": "v2.0" if status == "release" else "", "release": {
+            "tag": "v2.0", "commit": "a" * 40, "publishedAt": "2026-04-01T01:02:03Z", "title": "Better setup",
+            "url": "https://github.com/team/right/releases/tag/v2.0", "body": "The guide now covers Windows."}}
 
     monkeypatch.setattr(upstream, "check", check)
     tab, _ = page
@@ -125,10 +127,12 @@ def test_global_updates_include_hidden_skills_and_preserve_library_position(page
     assert calls == []
     tab.get_by_role("button", name="检查全部更新").click()
     panel = tab.get_by_role("region", name="全库版本检查")
-    expect(panel.get_by_role("heading", name="2 个技能有更新")).to_be_visible()
+    expect(panel.get_by_role("heading", name="1 个技能有更新")).to_be_visible()
     expect(panel).to_contain_text("已检查 55 / 55 项")
     expect(panel).to_contain_text("1 个技能缺少可检查的 GitHub 来源")
-    expect(panel.get_by_role("link", name=re.compile("^left-01"))).to_contain_text("内容有变化")
+    expect(panel.get_by_role("link", name=re.compile("^left-01"))).to_have_count(0)
+    expect(panel).to_contain_text("1 项暂无正式版")
+    expect(panel).to_contain_text("The guide now covers Windows.")
     expect(panel.get_by_role("link", name=re.compile("^right-00"))).to_contain_text("有新版本")
     assert len(calls) == len(set(calls)) == 55
     assert tab.url.endswith(query) and tab.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
@@ -148,7 +152,8 @@ def test_global_check_keeps_running_while_browsing_and_reports_quota(page, monke
         calls.append(item["name"])
         if len(calls) == 1:
             assert resume.wait(15)
-            return {"status": "changed", "latest": ""}
+            return {"status": "release", "latest": "v2", "release": {"tag": "v2", "commit": "a" * 40, "body": "",
+                    "title": "", "publishedAt": "", "url": "https://github.com/team/design/releases/tag/v2"}}
         raise upstream.QuotaExhausted(int(time.time()) + 300)
 
     monkeypatch.setattr(upstream, "check", check)

@@ -13,6 +13,8 @@ import { ProvenanceBlock } from './ProvenanceBlock';
 import { PlacementsBlock } from './PlacementsBlock';
 import { SkillBody, type DocumentTarget } from './SkillBody';
 import { SupportFiles } from './SupportFiles';
+import { ReleaseNotes } from './ReleaseNotes';
+import { ReleaseUpdate } from './ReleaseUpdate';
 import { SkillSource } from './SkillSource';
 
 type Source = GitHubSource & { host: string };
@@ -105,18 +107,27 @@ export function SkillDetail({ identityKey, generation, backHref, busy, onSave, o
         <button type="button" className="button" disabled={checking || !item.upstream.path} onClick={() => void checkVersion()}>
           {checking ? '正在检查…' : '检查版本'}</button></div>
       {new Set(item.placements.map(p => p.realpath)).size > 1 && <p className="block-note">
-        此次比较使用 <code>{item.realpath}</code>。可在各安装位置预览对应副本的变更。</p>}
+        {status?.status === 'release' ? '发现更新的副本' : '正在阅读'} <code>{status?.checkedEntry || item.realpath}</code></p>}
       {different.length > 0 && <div className="source-comparison">
         {different.map(p => <p key={p.realpath}>此副本安装自 <strong>{p.installedSource!.host}/{p.installedSource!.repo}</strong>
-          {' · '}<code>{p.installedSource!.path}</code>。升级使用此安装来源。
-          {copies.length > 1 && <small>{p.realpath}</small>}</p>)}</div>}
-      {!copies.length && <p className="block-note">本机没有可用于升级的 Git 安装记录。</p>}
-      {status ? <div className={versionError ? 'version-result is-stale' : 'version-result'}>
-        {versionError ? <small>上次检查结果 · </small> : null}<strong>{VERSION_LABELS[status.status]}</strong>
-        {(status.installed || status.latest) && <span className="mono">{[status.installed, status.latest].filter(Boolean).join(' → ')}</span>}
-        <p>{status.detail} · {formatDateTime(status.checkedAt)}</p>
-        {status.url && <a href={status.url} target="_blank" rel="noreferrer">查看 GitHub 发布说明</a>}</div>
-        : !item.upstream.path && <p className="block-note">请在来源中补全仓库内的 SKILL.md 路径。</p>}
+          {' · '}<code>{p.installedSource!.path}</code>{copies.length > 1 && <small>{p.realpath}</small>}</p>)}</div>}
+      {status ? <>
+        <div className={versionError ? 'version-result is-stale' : 'version-result'}>
+          <strong>{VERSION_LABELS[status.status]}</strong>
+          {status.release && <span className="mono">{status.status === 'release' && status.installed
+            ? status.installed + ' → ' : ''}{status.release.tag}</span>}
+          <small>{versionError ? '上次成功检查' : '检查于'} {formatDateTime(status.checkedAt)}</small>
+          {status.status === 'unknown' && <p>{status.detail}</p>}
+        </div>
+        {status.release && <ReleaseNotes key={status.release.commit} release={status.release} />}
+        {status.status === 'release' && status.release && (status.entries?.length ?
+          <ReleaseUpdate key={status.release.commit} identityKey={identityKey} entries={status.entries}
+            release={status.release} onApplied={onMaintenance} />
+          : <p className="block-note">{different.length ? '此副本的安装仓库与跟踪来源不同。'
+            : '此副本由宿主或源码仓库维护，请从原安装位置更新。'}</p>)}
+        {status.status === 'no_release' && <a className="version-source" href={'https://github.com/' + item.upstream.repo + '/releases'}
+          target="_blank" rel="noreferrer">查看仓库 Releases ↗</a>}
+      </> : !item.upstream.path && <p className="block-note">请在来源中补全仓库内的 SKILL.md 路径。</p>}
       {versionError && <p className="action-message" role="alert">{versionError}</p>}
     </section>}
     <details className="reader-fold"><summary>来源与可用范围</summary>

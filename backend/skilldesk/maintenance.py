@@ -124,6 +124,8 @@ def preview(
     item: dict | None = None,
     entry: str = "",
     dangling: bool = False,
+    release: dict | None = None,
+    expected_record: dict | None = None,
 ) -> dict:
     with writing():
         expire_plans()
@@ -151,7 +153,13 @@ def preview(
             new_tree = cli_digest = ""
             if action == "update":
                 record = before["record"]
-                request = packages.InstallSource(source_of(record), ref=str(record.get("ref") or ""))
+                installed = source_of(record)
+                if installed.host == "github.com" and not release:
+                    raise MaintenanceError("请先检查正式 Release，再选择要更新的版本", 409)
+                if release and record != expected_record:
+                    raise MaintenanceError(STALE, 409)
+                request = packages.InstallSource(installed, ref=str(record.get("ref") or ""),
+                                                 commit=release["commit"] if release else "")
             if request is not None:
                 try:
                     resolved, commit, license_name = packages.materialize(request, slot / "package")
@@ -169,6 +177,7 @@ def preview(
             report = {
                 "id": slot.name,
                 "action": action,
+                **({"release": release} if release else {}),
                 "target": str(target),
                 "source": coordinate,
                 "backup": str(backup_path(target, slot.name)) if action in {"update", "uninstall"} else "",
@@ -356,6 +365,8 @@ def apply(plan_id: str, get_item, *, accept_license: bool = False, accept_local:
             raise MaintenanceError("预览已过期，请重新预览", 410)
         r = plan["report"]
         action = r["action"]
+        if action == "update" and (r.get("source") or {}).get("host") == "github.com" and not r.get("release"):
+            raise MaintenanceError("旧版升级预览已过期，请重新检查正式 Release", 410)
         if r.get("outcome") == "current":
             verify(plan, get_item)
             return {"action": action, "target": r["target"], "backup": "", "outcome": "current"}
@@ -375,6 +386,8 @@ def apply(plan_id: str, get_item, *, accept_license: bool = False, accept_local:
         backup = Path(r["backup"]) if r["backup"] else None
         previous = txn / "previous"
         result = {"action": action, "target": str(target), "backup": r["backup"]}
+        if release := r.get("release"):
+            result.update(release=release, key=plan["key"])
         if record_only:
             result["outcome"] = "record"
         journal = {"id": plan_id, "txn": str(txn), "previous": str(previous), "staging": True}

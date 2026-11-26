@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, PAGE_SIZE } from '../api/endpoints';
 import { ApiError, describeError } from '../api/client';
-import type { AssetChanges, SkillSummary } from '../api/types';
+import type { AssetChanges, MaintenanceResult, SkillSummary } from '../api/types';
 import { FileOverlay } from '../components/FileOverlay';
 import { CategoryDirectory } from '../components/CategoryDirectory';
 import { ActionNotice, type Notice } from '../components/ActionNotice';
@@ -238,6 +238,13 @@ export function LibraryPage({ selectedKey, onOpenSkill, generation, onScanned }:
   });
   const facetData = facets.state.status === 'ready' ? facets.state.data : null;
   const openFile = (target: DocumentTarget) => setFiles(current => [...current, target]);
+  function onMaintenance(result: MaintenanceResult) {
+    const label = result.action === 'update' ? (result.release ? '已更新至 ' + result.release.tag : '已升级') : result.action === 'unlink' ? '已解除链接' : '已卸载';
+    setNotice({ text: (result.outcome === 'record' ? '已更新安装记录' : label) + ' · ' + result.target, backup: result.backup });
+    if (result.action !== 'update') navigate(libraryHref(position));
+    refreshData(); onScanned();
+  }
+
   return <div className={'library-workspace' + (selectedKey ? ' reading' : '')}>
     <LibraryNavigation view={view} onView={id => change('view', id === 'all' ? '' : id)}>
       <CategoryDirectory selected={category} groups={data?.categories ?? []} pending={data?.pendingCategories ?? 0}
@@ -254,7 +261,7 @@ export function LibraryPage({ selectedKey, onOpenSkill, generation, onScanned }:
           <option value="">全部 Agent</option>
           {(facetData?.agents ?? []).map(a => <option key={a.value} value={a.value}>{hostKindLabel(a.value)}</option>)}
         </select></label>
-        <LibraryUpdates onChecked={refreshData} />
+        <LibraryUpdates onChecked={refreshData} onApplied={onMaintenance} generation={generation} />
         <details ref={advanced} className="advanced"><summary>{hasAdvanced ? '已筛选' : '更多筛选'}</summary>
           <div className="facet-popover">{facetData ? <FacetGroups facets={facetData} filters={filters} onToggleFacet={toggle} />
             : <button type="button" className="button" onClick={facets.reload}>重新加载筛选</button>}
@@ -280,12 +287,7 @@ export function LibraryPage({ selectedKey, onOpenSkill, generation, onScanned }:
         {!narrow && !preview && grouped && Boolean(data?.total) && <p className="detail-empty">展开来源，选择要阅读的技能。</p>}
         {preview && (!narrow || selectedKey) && <SkillDetail key={preview} identityKey={preview}
         generation={generation + '-' + epoch} backHref={libraryHref(position)} busy={busy}
-        onSave={save} onFile={openFile} onVersion={refreshData} onMaintenance={result => {
-          const label = result.action === 'update' ? '已升级' : result.action === 'unlink' ? '已解除链接' : '已卸载';
-          setNotice({ text: (result.outcome === 'record' ? '已更新安装记录' : label) + ' · ' + result.target, backup: result.backup });
-          if (result.action !== 'update') navigate(libraryHref(position));
-          refreshData(); onScanned();
-        }} />}</div>
+        onSave={save} onFile={openFile} onVersion={refreshData} onMaintenance={onMaintenance} />}</div>
     </div>
     {file && preview && <FileOverlay key={file.rel} skillKey={preview} rel={file.rel} anchor={file.anchor} raw={file.raw} onFile={openFile}
       onClose={() => setFiles(current => current.slice(0, -1))} />}

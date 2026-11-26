@@ -93,11 +93,17 @@ class InstallPreview(BaseModel):
     path: str = ""
 
 
+class ReleaseSelection(BaseModel):
+    tag: str = Field(min_length=1)
+    commit: str = Field(pattern=r"^(?:[a-f0-9]{40}|[a-f0-9]{64})$")
+
+
 class PlacementPreview(BaseModel):
     model_config = ConfigDict(extra="forbid")
     identity_key: str
     entry: str
     action: Literal["update", "uninstall", "unlink"]
+    release: ReleaseSelection | None = None
 
 
 class Confirmation(BaseModel):
@@ -320,11 +326,15 @@ def create_app(
         key = categories.purpose(item, asset, categories.stored() if saved_categories is None else saved_categories)
         item["category"] = {"key": key, "name": categories.label(key), "manual": bool(asset.get("category"))}
         source = upstream.source_for(item, asset)
+        version = (versions_for_copies(item, source, upstream.previous) if "placements" in item or item["copy_count"] > 1
+                   else upstream.previous(item, source))
+        if version and "placements" not in item:
+            version = {key: value for key, value in version.items() if key not in {"release", "entries"}}
         library.apply_claim(item, library.claim_of(asset))
         item.update(repository=index_mod.repository_for(item["provenance"], asset),
                     favorite=bool(asset.get("favorite")), mine=bool(asset.get("mine")), upstream=source,
                     hasTrackingOverride=bool(asset.get("github")),
-                    versionStatus=upstream.previous(item, source), libraryRevision=annotations["revision"])
+                    versionStatus=version, libraryRevision=annotations["revision"])
         item["confidenceLabel"] = CONFIDENCE_LABEL.get(item["provenance"]["confidence"], "")
         return item
 
@@ -359,7 +369,26 @@ def create_app(
 
     @app.post("/api/maintenance/placement-preview")
     def placement_preview(action: PlacementPreview):
-        return run_operation(maintenance.preview, action.action, item=fresh_item(action.identity_key), entry=action.entry)
+        item = fresh_item(action.identity_key)
+        release = expected_record = None
+        if action.release:
+            if action.action != "update" or not item:
+                raise HTTPException(409, "此操作无法使用指定的 Release")
+            target = placements.select(item, action.entry, "update")
+            lock = placements.lock_path(target.parent)
+            expected_record = placements.lock_data(lock)["skills"].get(target.name)
+            _, annotations = get_installed(action.identity_key)
+            source = upstream.source_for(item, annotations["assets"].get(action.identity_key, {}))
+            copy = placements.release_copy(item, source, target, expected_record)
+            if not copy:
+                raise HTTPException(409, "所选副本与本次检查的安装来源不一致，请重新检查")
+            status = check_source(*copy, force=True)
+            release = status.get("release")
+            if (status["status"] != "release" or not release or release["tag"] != action.release.tag
+                    or release["commit"] != action.release.commit):
+                raise HTTPException(409, "可用的正式版已变化，请重新检查版本")
+        return run_operation(maintenance.preview, action.action, item=item, entry=action.entry,
+                             release=release, expected_record=expected_record)
 
     @app.post("/api/maintenance/dangling-preview")
     def dangling_preview(action: DanglingPreview):
@@ -379,6 +408,23 @@ def create_app(
                                accept_license=action.accept_license, accept_local=action.accept_local)
         if result.get("outcome") != "current":
             refresh_if_stale(database, force=True)
+        if release := result.get("release"):
+            try:
+                item, annotations = get_installed(result["key"])
+            except HTTPException as error:
+                if error.status_code == 404:  # A replay may outlive the installed copy.
+                    return result
+                raise
+            source = upstream.source_for(item, annotations["assets"].get(result["key"], {}))
+            target = Path(result["target"])
+            lock = placements.lock_path(target.parent)
+            record = placements.lock_data(lock)["skills"].get(target.name) if lock else None
+            if record and record.get("commit") == release["commit"]:
+                copy = placements.release_copy(item, source, target, record)
+                if copy:
+                    upstream.record_applied(*copy, release)
+                    remaining = versions_for_copies(item, source, upstream.previous)
+                    all_versions.applied(result["key"], release, remaining)
         return result
 
     @app.get("/api/library")
@@ -504,7 +550,7 @@ def create_app(
     def check_one(action: SkillAction, batch=None):
         item, annotations = get_installed(action.identity_key)
         source = upstream.source_for(item, annotations["assets"].get(action.identity_key, {}))
-        return check_source(item, source, action.force, batch)
+        return check_versions(item, source, action.force, batch)
 
     def version_inventory():
         refresh_if_stale(database)
@@ -521,6 +567,36 @@ def create_app(
         finally:
             conn.close()
 
+    def versions_for_copies(item, source, read):
+        primary = read(item, source)
+        if not primary or not primary.get("release"):
+            return primary
+        detail = item if "placements" in item else get_installed(item["identity_key"])[0]
+        outcomes = [(primary, "", item["realpath"])]
+        for p in detail["placements"]:
+            if p["is_symlink"] or "update" not in placements.inspect(detail, p)[0]:
+                continue
+            target = Path(p["entry_path"])
+            lock = placements.lock_path(target.parent)
+            record = placements.lock_data(lock)["skills"].get(target.name) if lock else None
+            copy = placements.release_copy(item, source, target, record) if record else None
+            if not copy:
+                continue
+            if str(target) == item["realpath"]:
+                outcomes[0] = (primary, str(target), str(target))
+            elif result := read(*copy):
+                outcomes.append((result, str(target), str(target)))
+        pending = [row for row in outcomes if row[0]["status"] == "release"]
+        if not pending:
+            return next((row[0] for row in outcomes if row[0]["status"] == "unknown"), primary)
+        result, _, path = next((row for row in pending if row[1]), pending[0])
+        entries = [entry for status, entry, _ in pending if entry and status["release"] == result["release"]]
+        return {**result, "entries": entries, "checkedEntry": path}
+
+    def check_versions(item, source, force, batch=None):
+        shared = {} if batch is None else batch
+        return versions_for_copies(item, source, lambda copy, src: check_source(copy, src, force, shared))
+
     all_versions = LibraryUpdateCheck()
 
     @app.get("/api/check-all")
@@ -529,7 +605,7 @@ def create_app(
 
     @app.post("/api/check-all", status_code=202)
     def start_global_check(tasks: BackgroundTasks):
-        return all_versions.start(tasks, version_inventory, check_source)
+        return all_versions.start(tasks, version_inventory, check_versions)
 
     @app.post("/api/check")
     def check_upstream(action: SkillAction):

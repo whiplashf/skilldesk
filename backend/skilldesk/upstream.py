@@ -1,17 +1,4 @@
-"""Check the GitHub coordinates of an installed skill, at its folder granularity.
-
-Two different questions are answered here:
-
-* **Has the upstream moved?** — by comparing the git tree SHA of the skill folder
-  at HEAD with a recorded install baseline (see :mod:`skilldesk.baselines`).
-* **Was the installed copy edited?** — by comparing the installed folder's own
-  git tree SHA with the one recorded next to the baseline.
-
-Nothing is guessed: when no comparable record exists yet the first check records
-one and says so instead of inventing "up to date". Repository-level responses are
-cached per process so checking a page of 50 skills costs a handful of API calls
-instead of hundreds (anonymous GitHub quota is 60 requests per hour).
-"""
+"""Release-only update checks for installed GitHub skills."""
 
 from __future__ import annotations
 
@@ -21,33 +8,21 @@ import os
 import re
 import subprocess
 import time
-from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote
 
 import httpx
 
-from . import baselines
 from .config import cache_dir, config_dir
 from .library import read_json, write_json
 from .markdown import split_frontmatter
 from .net import http_client
+from .packages import OID
 from .scan import read_body
 
 REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 TTL = 3600
-REPO_TTL = 900
 RELEASE_TTL = 3600
-MAX_TREE_ENTRIES = 60_000
-
-def _optional(get, endpoint: str, params: dict):
-    """Fetch something whose absence is survivable: a tree listing is an optimisation."""
-    try:
-        return get(endpoint, params)
-    except Exception:  # noqa: BLE001 - a failing optimisation must never fail the check
-        return None
-
-
 _GH_TOKEN: str | None = None
 
 
@@ -120,9 +95,7 @@ class QuotaExhausted(RuntimeError):
 
 _RATE_STATE: dict[str, float] = {"checked": 0.0, "remaining": -1.0, "reset": 0.0}
 
-_REPO_CACHE: dict[str, tuple[float, dict]] = {}
-_REF_CACHE: dict[tuple[str, str], tuple[float, dict]] = {}
-_RELEASE_CACHE: dict[str, tuple[float, list]] = {}
+_RELEASE_CACHE: dict[tuple[str, int], tuple[float, list]] = {}
 
 
 def coordinates(repo: str, path: str) -> dict:
@@ -169,7 +142,7 @@ def source_for(item: dict, asset: dict) -> dict | None:
 
 def _cache_path(item: dict, source: dict) -> Path:
     digest = hashlib.sha256(
-        json.dumps([2, item["identity_key"], item["content_hash"], source], sort_keys=True).encode()
+        json.dumps([3, item["identity_key"], item["realpath"], item["content_hash"], source], sort_keys=True).encode()
     ).hexdigest()
     return cache_dir() / "upstream" / (digest + ".json")
 
@@ -212,24 +185,11 @@ def _local_tree(directory: Path) -> str:
 
 
 def _version(tag: str) -> tuple[int, ...] | None:
-    match = re.fullmatch(r"v?(\d+(?:\.\d+){1,3})", tag or "", re.IGNORECASE)
+    match = re.fullmatch(r"v?(\d+(?:\.\d+){0,3})", tag or "", re.IGNORECASE)
     if not match:
         return None
     parts = tuple(map(int, match[1].split(".")))
     return parts + (0,) * (4 - len(parts))
-
-
-def _timestamp(value: str) -> float | None:
-    text = (value or "").strip().replace("Z", "+00:00")
-    if not text:
-        return None
-    try:
-        parsed = datetime.fromisoformat(text)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.timestamp()
 
 
 def installed_version(item: dict) -> str:
@@ -241,271 +201,173 @@ def installed_version(item: dict) -> str:
     body = read_body(str(directory)) or ""
     fm, _ = split_frontmatter(body)
     nested = re.search(r"(?m)^\s*version\s*:\s*['\"]?([^\s'\"]+)", str(fm.get("metadata", "")))
-    return str(fm.get("version") or release.get("version") or (nested[1] if nested else ""))
+    declared = release.get("version") if isinstance(release, dict) else ""
+    return str(fm.get("version") or declared or (nested[1] if nested else ""))
 
 
-def repo_view(repo: str, get, *, fresh: bool = False) -> dict:
-    """Head commit plus the folder tree map of a repository, cached per process.
-
-    ``fresh`` bypasses the cache: a forced check must see the upstream as it is
-    now, not as it was when a page was opened 10 minutes ago.
-    """
-    cached = None if fresh else _REPO_CACHE.get(repo.lower())
-    if cached and time.time() - cached[0] < REPO_TTL:
-        return cached[1]
-    repository = get("", {})
-    if not repository:
-        raise ValueError("无法访问这个 GitHub 仓库，请核对来源或私有仓库的访问权限")
-    branch = repository.get("default_branch") or "main"
-    head = get("commits/" + quote(branch, safe=""), {}) or {}
-    head_ref = str(head.get("sha") or "")
-    if not head_ref:
-        raise ValueError("GitHub 未返回当前提交，请稍后重试")
-    trees: dict[str, str] = {}
-    blobs: set[str] = set()
-    truncated = False
-    root_tree = str(((head.get("commit") or {}).get("tree") or {}).get("sha") or "")
-    payload = _optional(get, "git/trees/" + head_ref, {"recursive": "1"}) if head_ref else None
-    if payload:
-        entries = payload.get("tree") or []
-        truncated = bool(payload.get("truncated")) or len(entries) > MAX_TREE_ENTRIES
-        if not truncated:
-            for entry in entries:
-                path = str(entry.get("path") or "")
-                if not path:
+def _candidates(item: dict, source: dict, get, fresh: bool):
+    """Yield published releases in GitHub order, excluding tags scoped to other skills."""
+    names = {str(item.get(key) or "").lower() for key in ("name", "dir_name")}
+    names.add(PurePosixPath(source["path"]).parent.name.lower())
+    root = source["path"] == "SKILL.md"
+    page = 1
+    while True:
+        key = (source["repo"].lower(), page)
+        cached = _RELEASE_CACHE.get(key)
+        if not fresh and cached and time.time() - cached[0] < RELEASE_TTL:
+            releases = cached[1]
+        else:
+            releases = get("releases", {"per_page": 100, "page": page})
+            if not isinstance(releases, list):
+                raise ValueError("无法读取这个 GitHub 仓库的 Release，请核对来源和访问权限")
+            _RELEASE_CACHE[key] = (time.time(), releases)
+        for release in releases:
+            tag = str(release.get("tag_name") or "")
+            if not tag or release.get("draft") or release.get("prerelease"):
+                continue
+            scope = re.fullmatch(r"(.+)[@/](.+)", tag) or re.fullmatch(
+                r"([a-z][\w.-]*?)-(v?\d+[.\w+-]*)", tag, re.IGNORECASE
+            )
+            if scope:
+                prefix = scope[1].rsplit("/", 1)[-1].lower()
+                if prefix in names:
+                    yield release, scope[2]
                     continue
-                if entry.get("type") == "tree":
-                    trees[path] = str(entry.get("sha") or "")
-                elif entry.get("type") == "blob":
-                    blobs.add(path)
-    view = {
-        "repo": repo,
-        "branch": branch,
-        "head": head_ref,
-        "checkedAt": int(time.time()),
-        "headDate": str(((head.get("commit") or {}).get("committer") or {}).get("date") or ""),
-        "rootTree": root_tree,
-        "trees": trees,
-        "blobs": blobs,
-        "truncated": truncated,
-        "complete": bool(payload) and not truncated,
-    }
-    _REPO_CACHE[repo.lower()] = (time.time(), view)
-    return view
+                if prefix not in {"release", "releases", "version", "stable", source["repo"].split("/")[-1].lower()}:
+                    continue
+            yield release, tag if root else ""
+        if len(releases) < 100:
+            return
+        page += 1
 
 
-def _tree_at(repo: str, ref: str, get) -> dict | None:
-    """Folder tree map at an arbitrary ref (used for a pinned install commit)."""
-    key = (repo.lower(), ref)
-    # Only object IDs are immutable. A release tag can be moved.
-    immutable = bool(re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", ref))
-    cached = _REF_CACHE.get(key) if immutable else None
-    if cached and time.time() - cached[0] < TTL:
-        return cached[1]
-    payload = _optional(get, "git/trees/" + ref, {"recursive": "1"})
-    if not payload or payload.get("truncated"):
-        return None
-    trees = {
-        str(entry["path"]): str(entry.get("sha") or "")
-        for entry in payload.get("tree") or []
-        if entry.get("type") == "tree" and entry.get("path")
-    }
-    trees[""] = str(payload.get("sha") or "")
-    if immutable:
-        _REF_CACHE[key] = (time.time(), trees)
-    return trees
+def _tag_commit(tag: str, get) -> str:
+    ref = get("git/ref/tags/" + quote(tag, safe="/"), {}) or {}
+    obj = ref.get("object") or {}
+    seen = set()
+    while obj.get("type") == "tag":
+        sha = obj.get("sha", "")
+        if not OID.fullmatch(sha) or sha in seen:
+            return ""
+        seen.add(sha)
+        obj = (get("git/tags/" + sha, {}) or {}).get("object") or {}
+    sha = obj.get("sha", "")
+    return sha if obj.get("type") == "commit" and OID.fullmatch(sha) else ""
 
 
-def _dir_tree(view: dict, dir_path: str) -> str:
-    if not dir_path:
-        return view.get("rootTree", "")
-    return view.get("trees", {}).get(dir_path, "")
+def _folder(path: str, commit: str, get, snapshot: dict) -> str | None:
+    """Return the directory SHA. An empty string means this edition lacks the skill."""
+    trees = snapshot.setdefault("trees", {})
+    directory = path.rpartition("/")[0]
+    if commit not in trees:
+        data = get("git/trees/" + commit, {"recursive": "1"})
+        if data and not data.get("truncated"):
+            entries = {e["path"]: e for e in data["tree"]}
+            entries[""] = {"sha": data["sha"]}
+            trees[commit] = entries
+        else:
+            trees[commit] = None
+    tree = trees[commit]
+    if tree is not None:
+        if tree.get(path, {}).get("type") != "blob":
+            return ""
+        return tree.get(directory, {}).get("sha") or None
 
-
-def _dir_sha_at(ref: str, dir_path: str, get, view: dict) -> str:
-    """Directory tree SHA at an arbitrary ref, falling back to a contents listing."""
-    if ref == view["head"] and (current := _dir_tree(view, dir_path)):
-        return current
-    pinned = _tree_at(view["repo"], ref, get) if ref != view["head"] else {}
-    if pinned and pinned.get(dir_path):
-        return pinned[dir_path]
-    if not dir_path:
-        commit = get("commits/" + quote(ref, safe=""), {}) or {}
-        return str(((commit.get("commit") or {}).get("tree") or {}).get("sha") or "")
-    return _contents_dir_sha(view["repo"], dir_path, ref, get)
-
-
-def _contents_dir_sha(repo: str, dir_path: str, ref: str, get) -> str:
-    """Fallback for repositories whose recursive tree listing is truncated."""
-    directory = PurePosixPath(dir_path)
-    parent = "" if directory.parent == PurePosixPath(".") else "/" + quote(directory.parent.as_posix())
-    entries = get("contents" + parent, {"ref": ref})
-    if not entries:
+    # GitHub truncated the recursive tree. Look up just the document and its parent.
+    doc = get("contents/" + quote(path), {"ref": commit})
+    if not doc or doc.get("type") != "file":
         return ""
-    return next((str(e["sha"]) for e in entries if e.get("type") == "dir" and e.get("name") == directory.name), "")
+    if not directory:
+        return ((get("commits/" + commit, {}) or {}).get("commit", {}).get("tree") or {}).get("sha")
+    parent, _, name = directory.rpartition("/")
+    listing = get("contents" + ("/" + quote(parent) if parent else ""), {"ref": commit}) or []
+    return next((row["sha"] for row in listing if row["type"] == "dir" and row["name"] == name), None)
 
 
-def _releases(repo: str, get, *, fresh: bool = False) -> list:
-    cached = None if fresh else _RELEASE_CACHE.get(repo.lower())
-    if cached and time.time() - cached[0] < RELEASE_TTL:
-        return cached[1]
-    releases = get("releases", {"per_page": 100}) or []
-    _RELEASE_CACHE[repo.lower()] = (time.time(), releases)
-    return releases
-
-
-def _scoped_release(item: dict, directory: PurePosixPath, releases: list) -> tuple[dict, str] | tuple[None, str] | None:
-    """The release that belongs to this folder, and its version part."""
-    names = {item.get("name", "").lower(), item.get("dir_name", "").lower(), directory.name.lower()} - {""}
-    root = directory == PurePosixPath(".")
-    for release in releases:
-        if release.get("draft") or release.get("prerelease"):
-            continue
-        tag = str(release.get("tag_name") or "")
-        prefix = next(
-            (
-                name + separator
-                for name in sorted(names, key=len, reverse=True)
-                for separator in ("@", "/", "-")
-                if tag.lower().startswith(name + separator)
-            ),
-            "",
-        )
-        if prefix or (root and _version(tag)):
-            return release, tag[len(prefix) :]
-    return None
-
-
-def _release_verdict(
-    item: dict,
-    directory: PurePosixPath,
-    dir_path: str,
-    releases: list,
-    local_version: str,
-    installed_tree: str,
-    source: dict,
-    get,
-    view: dict,
-    result: dict,
-) -> dict | None:
-    """A release-based answer, when the tags say something the trees cannot."""
-    scoped = _scoped_release(item, directory, releases)
-    if scoped:
-        release, tag_version = scoped
-        tag = str(release.get("tag_name") or "")
-        if _version(tag_version) and _version(local_version):
-            if _version(tag_version) > _version(local_version):
-                result.update(latest=tag, url=release.get("html_url", ""))
-                return {**result, "status": "release", "detail": "这个 skill 已发布较新的正式版本"}
-            if _version(tag_version) == _version(local_version) and not installed_tree:
-                result.update(latest=tag, url=release.get("html_url", ""))
-                return {**result, "status": "current", "detail": "本地声明的版本与最近一次正式发布一致"}
-            return None
-    candidate = release if scoped else next(
-        (
-            release
-            for release in releases
-            if not release.get("draft") and not release.get("prerelease") and _version(str(release.get("tag_name") or ""))
-        ),
-        None,
-    )
-    if not candidate or not installed_tree or not source.get("ref"):
-        return None
-    tag = str(candidate.get("tag_name") or "")
-    released_tree = _dir_sha_at(tag, dir_path, get, view)
-    if not released_tree or released_tree == installed_tree:
-        return None
-    comparison = get("compare/" + quote(source["ref"], safe="") + "..." + quote(tag, safe=""), {})
-    if comparison and comparison.get("status") == "ahead":
-        result.update(latest=tag, url=candidate.get("html_url", ""))
-        return {**result, "status": "release", "detail": "发布包含此 skill 目录在安装基线之后的改动"}
-    return None
+def _editions(item, source, get, snapshot, fresh):
+    for release, version in _candidates(item, source, get, fresh):
+        tag = release["tag_name"]
+        commit = _tag_commit(tag, get)
+        if not commit:
+            raise ValueError(f"无法确认正式版 {tag} 的发布提交，请稍后重新检查")
+        tree = _folder(source["path"], commit, get, snapshot)
+        if tree is None:
+            raise ValueError(f"无法核对 {tag} 中的技能目录，请稍后重新检查")
+        if tree:
+            yield {
+                "tag": tag, "title": release.get("name") or "", "body": (release.get("body") or "").strip(),
+                "publishedAt": release.get("published_at") or "", "commit": commit,
+                "url": "https://github.com/" + source["repo"] + "/releases/tag/" + quote(tag, safe=""),
+            }, tree, version
 
 
 def evaluate(item: dict, source: dict, get, *, fresh: bool = False, snapshot: dict | None = None) -> dict:
-    """get(endpoint, params) reads this installed repository; a 404 yields None."""
-    directory = PurePosixPath(source["path"]).parent
-    dir_path = "" if directory == PurePosixPath(".") else directory.as_posix()
+    """Compare the installed skill with published, stable Releases, never branch HEAD."""
     snapshot = {} if snapshot is None else snapshot
-    if "view" not in snapshot:
-        snapshot["view"] = repo_view(source["repo"], get, fresh=fresh)
-    view = snapshot["view"]
+    ref = source.get("ref") or ""
+    result = {"checkedAt": int(time.time()), "installed": ref[:9], "latest": "", "url": ""}
+    editions = _editions(item, source, get, snapshot, fresh)
+    edition = next(editions, None)
+    if not edition:
+        return {**result, "status": "no_release", "detail": "上游尚未发布包含此技能的正式 Release。"}
+    release, tree, version = edition
     local_version = "" if source.get("trackingOnly") else installed_version(item)
-    result = {
-        "checkedAt": view["checkedAt"],
-        "installed": local_version or source.get("ref", "")[:9],
-        "latest": "",
-        "url": "",
-    }
+    result["installed"] = local_version or ref[:9]
 
-    if view.get("complete"):
-        upstream_has_path = source["path"] in view["blobs"]
+    def verdict(status: str, detail: str) -> dict:
+        return {**result, "latest": release["tag"], "url": release["url"], "release": release,
+                "status": status, "detail": detail}
+
+    if ref == release["commit"]:
+        result["installed"] = release["tag"]
+        return verdict("current", "已安装此正式版。")
+    installed_tree = source.get("tree")
+    if not installed_tree and OID.fullmatch(ref):
+        installed_tree = _folder(source["path"], ref, get, snapshot)
+    if not installed_tree and not source.get("trackingOnly"):
+        installed_tree = _local_tree(Path(item["realpath"]))
+    if installed_tree == tree:
+        return verdict("current", "已安装此正式版的技能内容。")
+
+    def compare(base, head):
+        return (get("compare/" + base + "..." + head, {"per_page": 1}) or {}).get("status")
+
+    if OID.fullmatch(ref):
+        relation = compare(ref, release["commit"])
+        if relation in {"behind", "identical"}:
+            return verdict("current", "本机已包含此正式版的提交。")
+        if relation != "ahead" or not installed_tree:
+            return verdict("unknown", "安装提交与发布提交的先后关系无法确认。")
+        available = True
     else:
-        upstream_has_path = bool(get("contents/" + quote(source["path"], safe="/"), {"ref": view["head"]}))
-    if not upstream_has_path:
-        return {**result, "status": "unknown", "detail": "上游当前分支中找不到这个 SKILL.md，请核对仓库内路径"}
+        latest, installed = _version(version), _version(local_version)
+        if latest and installed and latest <= installed:
+            return verdict("current", "本机声明的技能版本已达到此正式版。")
+        available = bool(latest and installed)
+    if source.get("trackingOnly"):
+        return verdict("unknown", "跟踪来源与此副本的安装来源不同。")
 
-    current = _dir_tree(view, dir_path)
-    if not current:
-        current = _contents_dir_sha(source["repo"], dir_path, view["head"], get)
-    if not current:
-        return {**result, "status": "unknown", "detail": "GitHub 未返回该目录的指纹"}
-
-    local_tree = _local_tree(Path(item["realpath"]))
-    identity_key = str(item.get("identity_key") or "")
-    baseline = baselines.get(identity_key, source["repo"], dir_path) if identity_key else None
-    installed_tree = source.get("tree", "")
-    if not installed_tree and source.get("ref"):
-        installed_tree = _dir_sha_at(source["ref"], dir_path, get, view)
-    if not installed_tree and not source.get("ref"):
-        installed_tree = (baseline or {}).get("installedTree", "")
-    edited = bool(baseline and baseline.get("localTree") and baseline["localTree"] != local_tree
-                  and local_tree != installed_tree)
-    note = "；本地副本自记录后被改动" if edited else ""
-
-    def settle(value: str, detail: str) -> dict:
-        if baseline is None and identity_key:
-            baselines.record(
-                item["identity_key"],
-                repo=source["repo"],
-                dir_path=dir_path,
-                dir_tree=current,
-                head_ref=view["head"],
-                local_tree=local_tree,
-                installed_tree=installed_tree or (current if local_tree == current else ""),
-            )
-        return {
-            **result,
-            "status": value,
-            "detail": detail + note,
-            "baseline": baseline is not None,
-            "localModified": edited,
-        }
-
-    if installed_tree and installed_tree == current:
-        return settle("current", "安装基线记录的目录与上游当前目录一致")
-    if not installed_tree and local_tree == current:
-        return settle("current", "本地目录与上游当前目录一致")
-
-    if "releases" not in snapshot:
-        snapshot["releases"] = _releases(source["repo"], get, fresh=fresh)
-    releases = snapshot["releases"]
-    verdict = _release_verdict(
-        item, directory, dir_path, releases, local_version, installed_tree, source, get, view, result
-    )
-    if verdict:
-        return settle(verdict["status"], verdict["detail"])
-    if installed_tree:
-        return settle("changed", "该 skill 的上游目录相对安装基线有变化")
-
-    # No comparable record yet: take the cheapest honest signal, then record one.
-    installed_at = _timestamp(source.get("installedAt", ""))
-    head_time = _timestamp(view.get("headDate", ""))
-    if installed_at and head_time and head_time <= installed_at:
-        return settle("current", "安装后该仓库没有新提交")
-    if baseline and baseline["dirTree"] != current:
-        return settle("changed", "上游目录自首次检查后发生变化")
-    return settle("baseline", "已记录上游指纹，尚缺少可核对的安装版本")
+    # For a repository-wide release, show the notes for the edition that actually
+    # shipped this folder. Later sibling-only releases may carry identical bytes.
+    # Legacy receipts sometimes have only a tree. An older matching release can
+    # also prove their place in history without guessing from an installation date.
+    if not version or not available:
+        same_history = not version
+        for older, older_tree, older_version in editions:
+            same_history = same_history and older_tree == tree
+            if same_history:
+                if available and OID.fullmatch(ref) and compare(ref, older["commit"]) != "ahead":
+                    break
+                release, version = older, older_version
+                same_history = not version
+            if not available and older_tree == installed_tree:
+                available = compare(older["commit"], release["commit"]) == "ahead"
+                break
+            if available and (version or older_tree != tree):
+                break
+    if available:
+        return verdict("release", "此正式版包含已安装版本之后的技能更新。")
+    return verdict("unknown", "已找到正式版，但缺少可核对的安装版本。")
 
 
 def _preflight(client) -> None:
@@ -553,8 +415,17 @@ def check(item: dict, source: dict, force: bool = False, *, batch: dict | None =
     return result
 
 
+def record_applied(item: dict, source: dict, release: dict) -> None:
+    """The confirmed, pinned package and its new receipt prove installation even offline."""
+    previous_release = (previous(item, source) or {}).get("release")
+    if previous_release and previous_release["commit"] != release["commit"]:
+        return
+    write_json(_cache_path(item, source), {
+        "checkedAt": int(time.time()), "installed": release["tag"], "latest": release["tag"],
+        "release": release, "url": release["url"], "status": "current", "detail": "已安装此正式版。",
+    })
+
+
 def forget_caches() -> None:
     """Drop in-process caches (used by tests and after a manual rescan)."""
-    _REPO_CACHE.clear()
-    _REF_CACHE.clear()
     _RELEASE_CACHE.clear()

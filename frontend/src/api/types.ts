@@ -20,8 +20,14 @@ export interface Provenance {
 }
 
 export interface GitHubSource { repo: string; path: string }
+export interface GitHubRelease {
+  tag: string; title: string; body: string; publishedAt: string; url: string; commit: string;
+}
 export interface VersionStatus {
-  status: 'release' | 'changed' | 'current' | 'baseline' | 'unknown';
+  status: 'release' | 'current' | 'no_release' | 'unknown';
+  release?: GitHubRelease;
+  checkedEntry?: string;
+  entries?: string[];
   checkedAt: number;
   installed: string;
   latest: string;
@@ -36,7 +42,8 @@ export interface LibraryUpdateReport {
   untracked: number;
   checked: number;
   uncertain: number;
-  updates: (CheckedSkill & { status: 'release' | 'changed'; latest: string })[];
+  noRelease: number;
+  updates: (CheckedSkill & { status: 'release'; latest: string; release: GitHubRelease; entries: string[] })[];
   failures: (CheckedSkill & { detail: string })[];
   error: string;
 }
@@ -93,6 +100,7 @@ export type PlacementAction = 'update' | 'uninstall' | 'unlink';
 export type MaintenanceAction = 'install' | PlacementAction;
 
 export interface MaintenancePreview {
+  release?: GitHubRelease;
   outcome?: 'current' | 'record';
   dangling?: boolean;
   id: string;
@@ -113,7 +121,7 @@ export interface MaintenancePreview {
   scripts: string[];
 }
 
-export interface MaintenanceResult { action: MaintenanceAction; target: string; backup: string; outcome?: 'record' }
+export interface MaintenanceResult { release?: GitHubRelease; action: MaintenanceAction; target: string; backup: string; outcome?: 'record' }
 
 export interface Placement {
   installedSource: MaintenancePreview['source'];

@@ -95,9 +95,9 @@
 .update-panel .update-error { padding: 7px 9px; color: var(--danger); background: var(--danger-soft); border-radius: var(--radius); }
 .update-list, .update-failures ul { padding: 0; margin: 10px 0; list-style: none; }
 .update-list li { border-top: 1px solid var(--line); }
-.update-list a { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 5px 10px; padding: 8px 3px; }
-.update-list a:hover { background: var(--surface-2); }
-.update-list a > span:first-child { flex: 1 1 13em; min-width: 0; overflow-wrap: anywhere; }
+.update-list li > a:first-child { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 5px 10px; padding: 8px 3px; }
+.update-list li > a:first-child:hover { background: var(--surface-2); }
+.update-list li > a:first-child > span:first-child { flex: 1 1 13em; min-width: 0; overflow-wrap: anywhere; }
 .update-list small { display: block; color: var(--ink-3); font-size: 11px; }
 .update-list .badge { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .update-failures { margin-top: 8px; }
@@ -180,6 +180,20 @@
 .version-result { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; margin-top: 7px; }
 .version-result strong { color: var(--accent); }
 .version-result p { flex-basis: 100%; margin: 0; color: var(--ink-2); }
+.version-result small, .release-notes time { color: var(--ink-3); font-size: 11px; }
+.version-source { display: inline-block; margin-top: 4px; font-size: 12px; }
+.release-notes { margin: 10px 0; padding: 10px 13px; border-left: 2px solid var(--line-strong); background: var(--surface-2); overflow-wrap: anywhere; }
+.release-notes-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; }
+.release-notes-heading strong { color: var(--ink); }
+.release-notes-heading a { margin-left: auto; }
+.release-notes .release-title { margin: 7px 0 0; font-weight: 600; }
+.release-body { white-space: pre-wrap; margin-top: 5px; line-height: 1.55; }
+.release-notes .link-button { margin-top: 6px; }
+.release-action label { display: grid; gap: 3px; margin-bottom: 7px; color: var(--ink-2); font-size: 12px; }
+.release-action select { max-width: 100%; min-width: 0; }
+.release-action .release-update { color: var(--surface); background: var(--accent); border-color: var(--accent); font-weight: 650; overflow-wrap: anywhere; max-width: 100%; }
+.update-list .release-notes { margin: 0 0 6px; }
+.update-list .release-action { margin: 6px 0 12px; }
 .origin-editor { display: grid; justify-items: start; gap: 8px; padding: 12px 0 4px; }
 .check-field { display: inline-flex; align-items: center; gap: 6px; }
 

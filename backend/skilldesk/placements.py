@@ -10,10 +10,11 @@ from pathlib import Path
 
 from .config import home, load_config
 from .hosts import _home_roots
-from .identity import lockfile_paths
+from .identity import infer_provenance, lockfile_paths
 from .library import read_json
 from .markdown import split_frontmatter
 from .packages import MaintenanceError, Source, git
+from .scan import read_body
 
 
 def plain(path: Path) -> bool:
@@ -191,6 +192,24 @@ def inspect(item: dict, p: dict) -> tuple[list[str], str]:
         return ["update", "uninstall"], ""
     except (MaintenanceError, ValueError, OSError, RuntimeError) as exc:
         return [], str(exc) if isinstance(exc, MaintenanceError) else "安装位置无法核实，请重新扫描"
+
+
+def release_copy(item: dict, source: dict | None, target: Path, record: dict | None):
+    """Match the tracking source and use this physical copy's own version evidence."""
+    installed = source_of(record)
+    if not source or installed.coordinates() != ("github.com", source["repo"].lower(), source["path"]):
+        return None
+    prov = infer_provenance(target.name, str(target), {}, {target.name: record})
+    receipt = {**source, "ref": prov.ref, "tree": prov.tree, "installedAt": prov.installed_at}
+    if str(target) == item["realpath"]:
+        if source != receipt:
+            return None
+        return item, source
+    body = read_body(str(target))
+    if body is None:
+        return None
+    copy = {**item, "realpath": str(target), "content_hash": hashlib.sha256(body.encode()).hexdigest()}
+    return copy, receipt
 
 
 def select(item: dict, entry: str, action: str) -> Path:
