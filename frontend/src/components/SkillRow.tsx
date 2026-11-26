@@ -19,7 +19,7 @@ export function SkillRow({ item, index, selected, busy, grouped, showCategory, h
     : item.upstream ? 'GitHub' : item.provenance.sourceLabel || '待确认来源';
   return (
     <li className={selected ? 'skill-entry is-current' : 'skill-entry'}>
-      <button type="button" className="row" data-row-index={index} aria-current={selected || undefined}
+      <button type="button" className="row" data-row-index={index} data-skill-key={item.identity_key} aria-current={selected || undefined}
         onClick={() => onOpen(item.identity_key)}>
         <span className="row-top"><strong className="row-name">{item.name}</strong>{status && <span className="row-status">{status}</span>}</span>
         <span className="row-desc">{item.description || '无描述'}</span>

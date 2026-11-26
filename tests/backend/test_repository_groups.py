@@ -42,6 +42,29 @@ def test_groups_count_full_results_and_page_inside_repository(fake_home):
         assert index(agent="claude")["repositories"] == []
         assert index(by_repository=False)["total"] == 55
 
+        def layout(name, **params):
+            response = client.get("/api/index", params={"view": "github", "layout": name, **params})
+            response.raise_for_status()
+            return response.json()
+
+        directory = layout("sources")
+        assert directory["total"] == 55 and not directory["items"]
+        assert [g["page"] for g in directory["repositories"]] == [0, 0]
+        other = "github.com/another/pack"
+        both = layout("sources", group_pages=json.dumps({group: 2, other: 1}))
+        assert [i["name"] for i in both["items"]] == ["alpha", *[f"topic-{i}" for i in range(50, 54)]]
+        assert both["total"] == 55
+        linked = layout("sources", repository=group, offset=50)
+        assert [i["name"] for i in linked["items"]] == [i["name"] for i in last["items"]]
+        key = linked["items"][-1]["identity_key"]
+        assert layout("flat", focus=key)["offset"] == 50
+        assert layout("sources", focus=key)["repositories"][1]["page"] == 2
+        folded = layout("sources", focus=key, group_pages=json.dumps({group: 0, other: 1}))
+        assert folded["total"] == 55 and [i["name"] for i in folded["items"]] == ["alpha"]
+        single = layout("sources", q="alpha", group_pages=json.dumps({other: 0}))
+        assert single["total"] == 1 and single["items"][0]["name"] == "alpha"
+        assert client.get("/api/index", params={"layout": "sources", "group_pages": '{"bad":-1}'}).status_code == 422
+
 
 def test_effective_source_and_local_checkouts_in_mine(fake_home, tmp_path):
     project = tmp_path / "workspace"

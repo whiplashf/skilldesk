@@ -18,7 +18,8 @@ export interface SkillQuery {
   category?: string;
   agent?: string;
   view?: string;
-  byRepository?: boolean;
+  layout?: 'flat' | 'sources';
+  groupPages?: string;
   repository?: string;
   focus?: string;
   q?: string;
@@ -31,6 +32,7 @@ export interface SkillQuery {
 }
 
 export const PAGE_SIZE = 50;
+export const VERSION_BATCH_LIMIT = 50;
 
 /** `identity_key` contains `:`, `/` and `@`, so it is always percent-encoded as one segment. */
 function skillPath(identityKey: string): string {
@@ -62,7 +64,7 @@ export const api = {
   classify: () => writeJson<{ classified: number; remaining: number }>('/api/ai/classify', 'POST'),
   checkVersion: (key: string) => writeJson<VersionStatus>('/api/check', 'POST', { identity_key: key, force: true }),
   checkBatch: (keys: string[]) =>
-    writeJson<{ items: { key: string; error?: string }[] }>('/api/check-batch', 'POST', { keys }),
+    writeJson<{ items: { key: string; error?: string; status?: number }[] }>('/api/check-batch', 'POST', { keys }),
   aiSettings: (signal: AbortSignal) => getJson<AISettings>('/api/settings/ai', signal),
   upstreamQuota: (signal: AbortSignal) => getJson<UpstreamQuota>('/api/upstream/quota', signal),
   saveAI: (body: {baseUrl: string; model: string; apiKey?: string}) => writeJson<AISettings>('/api/settings/ai', 'PUT', body),
@@ -76,7 +78,8 @@ export const api = {
         category: query.category,
         agent: query.agent,
         view: query.view,
-        by_repository: query.byRepository,
+        layout: query.layout,
+        group_pages: query.groupPages,
         repository: query.repository,
         focus: query.focus,
         q: query.q,

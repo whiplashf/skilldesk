@@ -182,6 +182,7 @@ export interface Repository {
 
 export interface RepositoryGroup extends Repository {
   count: number;
+  page?: number;
 }
 
 export interface IndexResponse {
@@ -193,8 +194,6 @@ export interface IndexResponse {
   limit: number;
   offset: number;
   repositories?: RepositoryGroup[];
-  activeRepository?: string;
-  matchedTotal?: number;
 }
 
 /** `meta` numbers are serialised as strings by the server. */

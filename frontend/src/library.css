@@ -37,14 +37,14 @@
   max-width: 100%; padding: 4px 6px; background: var(--surface); color: var(--ink);
   border: 1px solid var(--line-strong); border-radius: 5px; font: inherit;
 }
-.scope-links button, .repository-option, .directory-toggle, .layout-switch button {
+.scope-links button {
   appearance: none; border: 0; cursor: pointer; font: inherit; color: var(--ink-2); background: transparent;
 }
 .scope-links button {
   display: flex; gap: 12px; align-items: center; min-height: 39px; padding: 7px 12px;
   border-radius: 7px; text-align: left; font-size: 14px;
 }
-.scope-links button:hover, .repository-option:hover { background: var(--surface-3); }
+.scope-links button:hover { background: var(--surface-3); }
 .scope-links button[aria-pressed=true] { background: var(--accent); color: var(--surface); font-weight: 650; }
 .scope-icon { position: relative; display: inline-block; flex: none; width: 16px; height: 16px; }
 .scope-icon::before, .scope-icon::after { position: absolute; content: ''; }
@@ -54,23 +54,8 @@
 .icon-mine::before { width: 4px; height: 12px; left: 5px; top: 0; border: 1.5px solid; border-radius: 2px 2px 0 0; transform: rotate(38deg); }
 .icon-mine::after { width: 8px; bottom: 0; right: 0; border-bottom: 1.5px solid; }
 .icon-favorites::before { content: '☆'; inset: -4px 0 0; font: 19px/1.1 var(--sans); }
-.repository-panel { margin-top: 24px; border-top: 1px solid var(--line-strong); padding-top: 18px; }
-.layout-switch { display: flex; gap: 2px; padding: 3px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-3); }
-.layout-switch button { flex: 1; padding: 5px; border-radius: 4px; font-size: 12px; white-space: nowrap; }
-.layout-switch button[aria-pressed=true] { color: var(--accent); background: var(--surface); font-weight: 650; box-shadow: 0 1px 3px rgb(21 47 31 / 10%); }
-.directory-toggle { display: flex; width: 100%; gap: 7px; align-items: center; margin-top: 20px; padding: 8px 5px; text-align: left; font-size: 12px; font-weight: 650; }
-.directory-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--ink-3); font-weight: 450; }
-.chevron { width: 7px; height: 7px; flex: none; margin-left: auto; margin-right: 5px; border: solid currentColor; border-width: 0 1.5px 1.5px 0; transform: rotate(45deg); }
-[aria-expanded=true] > .chevron { transform: rotate(225deg); }
-.repository-directory { display: grid; gap: 4px; }
-.repository-option { display: flex; gap: 8px; align-items: center; padding: 10px 8px; width: 100%; min-width: 0; border-radius: 6px; text-align: left; }
-.repository-option[aria-pressed=true] { background: var(--accent-soft); color: var(--accent); box-shadow: inset 2px 0 var(--accent); }
-.repository-name { min-width: 0; overflow-wrap: anywhere; font-size: 13px; font-weight: 550; line-height: 1.35; }
-.repository-name small { display: block; margin-top: 3px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--ink-3); font-size: 10px; font-weight: 400; }
-.repository-count { margin-left: auto; padding: 0 3px; color: var(--ink-3); font: 12px/1.5 var(--mono); }
 .folder-icon { position: relative; display: inline-block; flex: none; width: 15px; height: 10px; margin-top: 2px; border: 1.5px solid currentColor; border-radius: 1px 2px 2px; color: var(--accent); }
 .folder-icon::before { position: absolute; left: -1.5px; top: -4px; content: ''; width: 6px; height: 2px; border: 1.5px solid; border-bottom: 0; border-radius: 2px 2px 0 0; }
-.directory-empty { margin: 5px; color: var(--ink-3); font-size: 12px; }
 
 .library-tools { grid-area: tools; position: relative; z-index: 2; min-width: 0; padding: 13px 21px; border-bottom: 1px solid var(--line); }
 .library-search-line, .reader-heading, .reader-toolbar, .section-heading, .form-actions { display: flex; align-items: center; gap: 11px; }
@@ -103,6 +88,29 @@
 .inventory-heading { min-width: 0; }
 .inventory-heading h2 { margin: 0 0 3px; overflow-wrap: anywhere; font-size: 18px; line-height: 1.3; letter-spacing: -.03em; }
 .pane-count { color: var(--ink-3); font-size: 12px; }
+.inventory-actions { display: flex; align-items: center; flex: none; gap: 8px; }
+.source-switch { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; white-space: nowrap;
+  cursor: pointer; color: var(--ink-2); font-size: 12px; }
+.source-switch input { appearance: none; position: relative; width: 24px; height: 14px; margin: 0;
+  border: 1px solid var(--ink-3); border-radius: 9px; background: var(--surface); cursor: pointer; }
+.source-switch input::after { content: ''; position: absolute; inset: 2px auto auto 2px; width: 8px; height: 8px;
+  background: var(--ink-3); border-radius: 50%; }
+.source-switch input:checked { background: var(--accent); border-color: var(--accent); }
+.source-switch input:checked::after { left: 12px; background: var(--surface); }
+.source-switch:has(input:checked) { color: var(--accent); }
+.source-group > h3 { position: sticky; top: 0; z-index: 1; margin: 0; }
+.source-heading { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 42px; padding: 8px 13px;
+  text-align: left; font: inherit; color: var(--ink); background: var(--surface-2); cursor: pointer;
+  border: 0; border-bottom: 1px solid var(--line-strong); }
+.source-heading:hover { background: var(--surface-3); }
+.source-heading:focus-visible { outline-offset: -3px; }
+.source-chevron { flex: none; width: 6px; height: 6px; border: solid var(--ink-2); border-width: 0 1.5px 1.5px 0; transform: rotate(-45deg); }
+.source-heading[aria-expanded=true] .source-chevron { transform: translateY(-1px) rotate(45deg); }
+.source-name { min-width: 0; overflow-wrap: anywhere; font-size: 13px; font-weight: 650; }
+.source-name small { display: block; font: 11px/1.4 var(--sans); color: var(--ink-3); overflow-wrap: anywhere; }
+.source-count { margin-left: auto; color: var(--ink-2); font: 12px/1.5 var(--mono); font-variant-numeric: tabular-nums; }
+.source-loading { margin: 0; padding: 12px 28px; color: var(--ink-3); font-size: 12px; }
+.source-group .skill-entry .row { padding-left: 29px; }
 .pane-head .icon-button { width: 30px; height: 30px; flex: none; color: var(--accent); border-color: var(--line); font-size: 17px; }
 .skill-entry { position: relative; border-bottom: 1px solid var(--line); }
 .skill-entry .row { gap: 6px; min-height: 79px; padding: 12px 36px 12px 15px; border-left-width: 3px; border-bottom: 0; }
@@ -169,15 +177,6 @@
   .scope-links { display: flex; flex-wrap: wrap; gap: 3px; }
   .scope-links button { gap: 5px; min-height: 33px; padding: 5px 9px; font-size: 12.5px; }
   .scope-icon { display: none; }
-  .repository-panel { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 10px; margin: 5px 0 0; padding: 5px 0 0; border-top: 1px solid var(--line); }
-  .layout-switch { padding: 2px; flex: none; }
-  .layout-switch button { padding: 3px 8px; }
-  .directory-toggle { margin: 0; padding: 5px 0; width: auto; min-width: 0; flex: 1; }
-  .repository-directory { width: 100%; display: flex; gap: 5px; flex-wrap: wrap; max-height: 115px; overflow-y: auto; }
-  .repository-option { width: auto; max-width: 100%; padding: 6px 8px; border: 1px solid var(--line); background: var(--surface); }
-  .repository-option[aria-pressed=true] { border-color: var(--accent); box-shadow: none; }
-  .repository-name { font-size: 12px; }
-  .repository-name small { max-width: 165px; }
   .library-tools { padding: 9px 12px; }
   .library-panes { display: block; }
   .library-panes .list-column, .library-panes .detail-pane { height: 100%; }
@@ -219,10 +218,6 @@
   .topbar .topbar-tail { grid-area: tools; }
   .topbar .tabs { grid-area: navigation; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 3px; }
   .topbar .tab { padding: 7px 2px; text-align: center; }
-}
-@media (max-height: 550px) and (max-width: 860px) {
-  .repository-directory { flex-wrap: nowrap; max-height: 42px; overflow-x: auto; }
-  .repository-option { flex: none; }
 }
 
 .placement-actions, .maintenance-dialog header, .maintenance-dialog footer { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }

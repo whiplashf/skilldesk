@@ -21,11 +21,23 @@ export function libraryParams(): URLSearchParams {
 
 export interface LibraryPosition { repo: string; page: number }
 
+export function sourcePages(params: URLSearchParams): Record<string, number> {
+  try {
+    const pages = JSON.parse(params.get('groups') || '{}');
+    if (pages && typeof pages === 'object' && !Array.isArray(pages)) {
+      return Object.fromEntries(Object.entries(pages).filter((entry): entry is [string, number] =>
+        typeof entry[1] === 'number' && Number.isSafeInteger(entry[1]) && entry[1] >= 0));
+    }
+  } catch { /* A malformed bookmark can still open the default groups. */ }
+  return {};
+}
+
 function librarySuffix(position?: LibraryPosition): string {
   const onLibrary = /^#\/(library|skill)(\/|\?|$)/.test(window.location.hash);
   const params = onLibrary ? libraryParams() : new URLSearchParams(sessionStorage.getItem('skilldesk.library-query') ?? '');
   if (position) {
-    params.set('repo', position.repo);
+    if (position.repo) params.set('repo', position.repo);
+    else params.delete('repo');
     if (position.page) params.set('page', String(position.page + 1));
     else params.delete('page');
   }
@@ -37,15 +49,16 @@ export function libraryHref(position?: LibraryPosition): string {
   return HASH.library + (query ? '?' + query : '');
 }
 
-export function updateLibraryParams(changes: Record<string, string>, reset = false): void {
-  const params = reset ? new URLSearchParams() : libraryParams();
+export function updateLibraryParams(changes: Record<string, string>, keepReader = false): void {
+  const params = libraryParams();
   for (const [key, value] of Object.entries(changes)) {
     if (value) params.set(key, value);
     else params.delete(key);
   }
   const query = params.toString();
   sessionStorage.setItem('skilldesk.library-query', query);
-  window.history.replaceState(null, '', HASH.library + (query ? '?' + query : ''));
+  const path = keepReader ? window.location.hash.split('?')[0] || HASH.library : HASH.library;
+  window.history.replaceState(null, '', path + (query ? '?' + query : ''));
   window.dispatchEvent(new HashChangeEvent('hashchange'));
 }
 

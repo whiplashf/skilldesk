@@ -373,11 +373,7 @@ def repository_for(provenance: sqlite3.Row | dict, asset: dict) -> dict[str, str
     return {"key": "unassigned", "name": "未关联仓库", "location": ""}
 
 
-def _repository_page(
-    conn: sqlite3.Connection, clause: str, params: list, assets: dict,
-    repository: str, focus: str, limit: int, offset: int,
-) -> dict[str, Any]:
-    # Group the complete filtered inventory first. Only the active group's page needs full skill records.
+def _source_groups(conn: sqlite3.Connection, clause: str, params: list, assets: dict) -> tuple[list[dict], list[str]]:
     rows = conn.execute(
         "SELECT s.identity_key, p.host, p.repo, p.local_root AS localRoot, p.checkout_remote AS checkoutRemote, "
         "p.provider, p.source_label AS sourceLabel FROM skill s "
@@ -385,38 +381,77 @@ def _repository_page(
         params,
     )
     groups: dict[str, dict] = {}
-    focus_group = ""
+    identities = []
     for row in rows:
-        identity = row["identity_key"]
-        repo = repository_for(row, assets.get(identity, {}))
-        group = groups.setdefault(repo["key"], {**repo, "members": []})
-        group["members"].append(identity)
-        if identity == focus:
-            focus_group = repo["key"]
+        key = row["identity_key"]
+        identities.append(key)
+        repo = repository_for(row, assets.get(key, {}))
+        groups.setdefault(repo["key"], {**repo, "members": []})["members"].append(key)
     ordered = sorted(groups.values(), key=lambda g: (
         g["key"] == "unassigned", g["key"].startswith("provider:"), g["name"].casefold(), g["key"]
     ))
-    active = focus_group or (repository if repository in groups else next((g["key"] for g in ordered), ""))
-    members = groups[active]["members"] if active else []
-    if focus_group:
-        offset = members.index(focus) // limit * limit
-    elif repository and repository != active:
-        offset = 0
-    offset = min(offset, max(0, (len(members) - 1) // limit * limit))
-    page_ids = members[offset:offset + limit]
-    items = conn.execute(
-        _ITEM_SQL + " WHERE s.identity_key IN (SELECT value FROM json_each(?)) ORDER BY s.name COLLATE NOCASE, s.identity_key",
-        [json.dumps(page_ids)],
-    )
-    return {
-        "items": [_row_to_item(row) for row in items],
-        "total": len(members), "limit": limit, "offset": offset, "activeRepository": active,
-        "matchedTotal": sum(len(g["members"]) for g in ordered),
-        "repositories": [
-            {"key": g["key"], "name": g["name"], "location": g["location"], "count": len(g["members"])}
-            for g in ordered
-        ],
-    }
+    return ordered, identities
+
+
+def _page_offset(keys: list, limit: int, offset: int, focus: str = "") -> int:
+    if focus and focus in keys:
+        return keys.index(focus) // limit * limit
+    return min(offset, max(0, (len(keys) - 1) // limit * limit))
+
+
+def _ordered_items(conn: sqlite3.Connection, keys: list[str]) -> list[dict]:
+    if not keys:
+        return []
+    rows = conn.execute(_ITEM_SQL + " WHERE s.identity_key IN (SELECT value FROM json_each(?))", [json.dumps(keys)])
+    items = {row["identity_key"]: _row_to_item(row) for row in rows}
+    return [items[key] for key in keys]
+
+
+def _repository_page(
+    conn: sqlite3.Connection, clause: str, params: list, assets: dict, repository: str, focus: str,
+    limit: int, offset: int, layout: str, group_pages: dict[str, int],
+) -> dict[str, Any]:
+    groups, identities = _source_groups(conn, clause, params, assets)
+    directory = [
+        {"key": g["key"], "name": g["name"], "location": g["location"], "count": len(g["members"])} for g in groups
+    ]
+    result = {"repositories": directory, "limit": limit, "total": len(identities), "offset": 0}
+    if layout == "flat":
+        offset = _page_offset(identities, limit, offset, focus)
+        return {**result, "offset": offset, "items": _ordered_items(conn, identities[offset:offset + limit])}
+
+    if layout == "sources":
+        # Small sets open together. Large sets start with a compact directory, keeping a linked skill in view.
+        page_keys = []
+        for group, entry in zip(groups, directory):
+            members, key = group["members"], group["key"]
+            requested = group_pages.get(key)
+            if len(groups) == 1 and requested == 0:
+                requested = None
+            if requested is not None:
+                start = _page_offset(members, limit, (requested - 1) * limit) if requested else None
+            elif focus and focus in members:
+                start = _page_offset(members, limit, 0, focus)
+            elif key == repository or len(groups) == 1:
+                start = _page_offset(members, limit, offset)
+            elif len(identities) <= 12:
+                start = 0
+            else:
+                start = None
+            entry["page"] = 0 if start is None else start // limit + 1
+            if start is not None:
+                page_keys.extend(members[start:start + limit])
+        return {**result, "items": _ordered_items(conn, page_keys)}
+
+    # Older API callers request a single repository and paginate within it.
+    active = next((g for g in groups if focus and focus in g["members"]), None)
+    if active is None:
+        active = next((g for g in groups if g["key"] == repository), groups[0] if groups else None)
+    key = active["key"] if active else ""
+    members = active["members"] if active else []
+    offset = _page_offset(members, limit, 0 if repository and repository != key else offset, focus)
+    return {**result, "activeRepository": key, "matchedTotal": len(identities), "total": len(members),
+            "offset": offset, "items": _ordered_items(conn, members[offset:offset + limit])}
 
 
 def list_skills(
@@ -433,6 +468,8 @@ def list_skills(
     category: str = "",
     category_index: dict[str, str] | None = None,
     by_repository: bool = False,
+    layout: str = "",
+    group_pages: dict[str, int] | None = None,
     repository: str = "",
     focus: str = "",
     limit: int = 50,
@@ -500,8 +537,9 @@ def list_skills(
         if category:
             clause += (" AND " if where else " WHERE ") + f"s.identity_key IN ({annotated})"
             params.append(json.dumps([key for key, value in category_index.items() if value == category]))
-    if by_repository:
-        return {**_repository_page(conn, clause, params, annotations, repository, focus, limit, offset), **category_data}
+    if by_repository or layout in {"flat", "sources"}:
+        result = _repository_page(conn, clause, params, annotations, repository, focus, limit, offset, layout, group_pages or {})
+        return {**result, **category_data}
     total = conn.execute(
         "SELECT count(*) FROM skill s LEFT JOIN provenance p ON p.identity_key = s.identity_key" + clause,
         params,

@@ -21,7 +21,7 @@ import httpx
 from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, NonNegativeInt, TypeAdapter, ValidationError
 
 from . import __version__, ai, categories, library, maintenance, placements, prompts, translation, upstream
 from . import index as index_mod
@@ -34,6 +34,7 @@ from .packages import MaintenanceError, SkillChoices
 from .scan import MAX_SKILL_BYTES, input_stamp, read_body, scan
 
 RESCAN_THROTTLE_SECONDS = 3.0
+GROUP_PAGES = TypeAdapter(dict[str, NonNegativeInt])
 _rescan_lock = threading.Lock()
 _last_rescan = 0.0
 
@@ -513,7 +514,7 @@ def create_app(
                 result = check_one(SkillAction(identity_key=key, force=True), memo)
                 results.append({"key": key, "result": result})
             except HTTPException as error:
-                results.append({"key": key, "error": error.detail})
+                results.append({"key": key, "error": error.detail, "status": error.status_code})
                 if error.status_code == 429:
                     break
         return {"items": results}
@@ -544,6 +545,8 @@ def create_app(
         agent: str = "",
         view: str = "all",
         by_repository: bool = False,
+        layout: Literal["flat", "sources", ""] = "",
+        group_pages: str = "",
         repository: str = "",
         focus: str = "",
         host: str = "",
@@ -553,6 +556,10 @@ def create_app(
         limit: int = Query(50, ge=1, le=500),
         offset: int = Query(0, ge=0),
     ) -> dict[str, Any]:
+        try:
+            pages = GROUP_PAGES.validate_json(group_pages, strict=True) if group_pages else {}
+        except ValidationError as error:
+            raise HTTPException(422, "来源分组的页码无效") from error
         conn = with_conn()
         try:
             annotations = annotations_for(conn)
@@ -562,6 +569,7 @@ def create_app(
                 q=q, agent=agent, view=view, assets=annotations["assets"],
                 category=category, category_index=categories.inventory(conn, annotations["assets"], saved),
                 by_repository=by_repository, repository=repository, focus=focus,
+                layout=layout, group_pages=pages,
                 host=host,
                 source=source,
                 confidence=confidence,
