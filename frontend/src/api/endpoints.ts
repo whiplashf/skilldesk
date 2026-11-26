@@ -47,8 +47,8 @@ export const api = {
     writeJson<{ revision: number }>('/api/prompts/' + encodeURIComponent(item.id), 'DELETE', undefined, item.revision),
   installRoots: (signal: AbortSignal) =>
     getJson<{ items: { path: string; label: string }[] }>('/api/maintenance/roots', signal),
-  previewInstall: (root: string, repository: string, path: string) =>
-    writeJson<MaintenancePreview>('/api/maintenance/install-preview', 'POST', { root, repository, path }),
+  previewInstall: (root: string, repository: string, path: string, signal?: AbortSignal) =>
+    writeJson<MaintenancePreview>('/api/maintenance/install-preview', 'POST', { root, repository, path }, undefined, signal),
   previewPlacement: (identity_key: string, entry: string, action: PlacementAction) =>
     writeJson<MaintenancePreview>('/api/maintenance/placement-preview', 'POST', { identity_key, entry, action }),
   previewDangling: (entry: string) =>

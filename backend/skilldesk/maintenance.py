@@ -18,7 +18,7 @@ from pathlib import Path
 from . import packages
 from .config import state_dir
 from .library import read_json, write_json
-from .packages import SCRIPT_EXTENSIONS, MaintenanceError, Source
+from .packages import SCRIPT_EXTENSIONS, MaintenanceError
 from .placements import (
     dangling_target,
     dependencies,
@@ -130,10 +130,11 @@ def preview(
         slot = plans() / uuid.uuid4().hex
         slot.mkdir(mode=0o700)
         try:
+            request = None
             if action == "install":
                 if Path(root) not in stores():
                     raise MaintenanceError("请选择已配置的全局或项目安装目录")
-                source = Source.parse(repository, path or "SKILL.md")
+                request = packages.install_source(repository, path)
                 target = None
             elif action == "unlink" and dangling:
                 target = Path(entry)
@@ -148,24 +149,19 @@ def preview(
             before = old_state(target, action) if target else None
             after = {}
             new_tree = cli_digest = ""
-            if action in {"install", "update"}:
-                ref = ""
-                if before is not None:
-                    source = source_of(before["record"])
-                    ref = str(before["record"].get("ref") or "")
+            if action == "update":
+                record = before["record"]
+                request = packages.InstallSource(source_of(record), ref=str(record.get("ref") or ""))
+            if request is not None:
                 try:
-                    resolved, commit, license_name = packages.materialize(
-                        source, slot / "package", ref, discover=action == "install" and not path
-                    )
-                except packages.SkillChoices as error:
-                    if action == "update":
+                    resolved, commit, license_name = packages.materialize(request, slot / "package")
+                except MaintenanceError as error:
+                    if action == "update" and error.status == 404:
                         raise MaintenanceError("原安装路径已从仓库移除，请核实上游目录", 409) from error
                     raise
-                if action == "update" and resolved.coordinates() != source.coordinates():
-                    raise MaintenanceError("原安装路径已从仓库移除，请核实上游目录", 409)
                 coordinate = resolved.json()
                 if target is None:
-                    target = Path(root) / install_name(resolved)
+                    target = Path(root) / install_name(resolved, slot / "package")
                     before = old_state(target, action)
                 after = manifest(slot / "package")
                 new_tree = _local_tree(slot / "package")
@@ -177,6 +173,7 @@ def preview(
                 "source": coordinate,
                 "backup": str(backup_path(target, slot.name)) if action in {"update", "uninstall"} else "",
                 "commit": commit,
+                "ref": request.ref if request else "",
                 "license": license_name,
                 "expiresAt": int(time.time()) + PLAN_TTL,
                 "localState": drift(target, before) if action in {"update", "uninstall"} else "clean",
@@ -235,6 +232,8 @@ def record_after(plan: dict) -> dict | None:
         "updatedAt": now,
     }
     lock = Path(plan["before"]["lock"])
+    if r.get("ref"):
+        record["ref"] = r["ref"]
     if lock.name == "skills-lock.json":
         record["computedHash"] = (
             plan["cliHash"]

@@ -12,6 +12,7 @@ from .config import home, load_config
 from .hosts import _home_roots
 from .identity import lockfile_paths
 from .library import read_json
+from .markdown import split_frontmatter
 from .packages import MaintenanceError, Source, git
 
 
@@ -202,9 +203,15 @@ def select(item: dict, entry: str, action: str) -> Path:
     return Path(entry)
 
 
-def install_name(source: Source) -> str:
+def install_name(source: Source, package: Path) -> str:
+    metadata, _ = split_frontmatter((package / "SKILL.md").read_text(encoding="utf-8", errors="replace"))
     parent = Path(source.path).parent
-    name = parent.name if parent != Path(".") else source.repo.split("/")[-1]
-    if not re.fullmatch(r"[\w-][\w.-]*", name) or name in {"node_modules", "__pycache__"}:
-        raise MaintenanceError("仓库目录名不适合作为安装目录名")
-    return name
+    fallback = parent.name if parent != Path(".") else source.repo.split("/")[-1]
+    for name in (str(metadata.get("name") or "").strip(), fallback):
+        if (
+            re.fullmatch(r"[\w-][\w.-]*", name)
+            and len(name.encode()) <= 255
+            and name not in {"node_modules", "__pycache__"}
+        ):
+            return name
+    raise MaintenanceError("技能名称和仓库目录名均不适合作为安装目录名")

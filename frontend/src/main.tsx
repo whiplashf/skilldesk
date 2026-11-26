@@ -4,6 +4,7 @@ import { App } from './App';
 import './styles.css';
 import './library.css';
 import './prompts.css';
+import './settings.css';
 
 const container = document.getElementById('root');
 if (container === null) {

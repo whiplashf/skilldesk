@@ -88,6 +88,7 @@ export interface MaintenancePreview {
   target: string;
   source: { host: string; repo: string; path: string } | null;
   commit: string;
+  ref?: string;
   backup: string;
   license: string;
   expiresAt: number;

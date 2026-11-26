@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { describeError } from '../api/client';
 import { api } from '../api/endpoints';
 import { useApi } from '../lib/useApi';
@@ -9,6 +9,8 @@ export function ProjectSettings({ onChange, focus }: { onChange: () => void; foc
   const [path, setPath] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+  const input = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (focus) input.current?.focus(); }, [focus]);
 
   async function change(folder: string, remove = false) {
     setBusy(true);
@@ -28,7 +30,7 @@ export function ProjectSettings({ onChange, focus }: { onChange: () => void; foc
 
   return <section className="block">
     <h2 className="block-title">项目目录</h2>
-    <p className="block-note">添加项目后，项目里的 skill 会出现在库中，并标明可使用它的项目和 Agent。</p>
+    <p className="block-note">将项目加入扫描范围，即可在技能库查看它的技能。</p>
     {projects.state.status === 'error' && <ErrorState message={projects.state.error} onRetry={projects.reload} />}
     {projects.state.status === 'ready' && <ul className="project-paths">
       {projects.state.data.effective.map(folder => <li key={folder}><code>{folder}</code>
@@ -38,7 +40,7 @@ export function ProjectSettings({ onChange, focus }: { onChange: () => void; foc
       </li>)}
     </ul>}
     <form className="settings-form" onSubmit={event => { event.preventDefault(); void change(path.trim()); }}>
-      <label>项目绝对路径<input autoFocus={focus} required value={path} placeholder="/path/to/project" onChange={e => setPath(e.target.value)} /></label>
+      <label>项目绝对路径<input ref={input} required value={path} placeholder="/path/to/project" onChange={e => setPath(e.target.value)} /></label>
       <div className="form-actions"><button className="button" disabled={busy || !path.trim()}>添加项目</button>
         <span role="status">{message}</span></div>
     </form>

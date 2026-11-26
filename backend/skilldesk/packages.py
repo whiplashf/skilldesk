@@ -9,7 +9,7 @@ import re
 import subprocess
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path, PurePosixPath
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse, urlsplit
 
 from .config import cache_dir
 from .markdown import split_frontmatter
@@ -18,6 +18,7 @@ MAX_FILES = 400
 MAX_BYTES = 8 * 1024 * 1024
 SCRIPT_EXTENSIONS = {".sh", ".bash", ".zsh", ".py", ".js", ".mjs", ".ts", ".ps1", ".bat", ".cmd", ".rb"}
 NAME = re.compile(r"^[\w.-]+$")
+OID = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
 
 
 class MaintenanceError(ValueError):
@@ -92,7 +93,7 @@ class Source:
             and len(pieces) != 2
             or any(not NAME.fullmatch(piece) or piece in {".", ".."} for piece in pieces)
         ):
-            raise MaintenanceError("请填写完整的仓库地址，文档路径单独填写")
+            raise MaintenanceError("请输入仓库地址，例如 https://github.com/owner/repo")
         if host == "github.com":
             repo = repo.lower()
         path = relative_path(path.strip())
@@ -130,8 +131,7 @@ def git(args: list[str], directory: Path | None = None, *, data: bytes | None = 
 
 
 def remote_head(source: Source, ref: str = "") -> str:
-    oid = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
-    if oid.fullmatch(ref):
+    if OID.fullmatch(ref):
         return ref
     if ref and (
         ref.startswith("-") or git(["check-ref-format", "refs/heads/" + ref], check=False).returncode
@@ -148,11 +148,67 @@ def remote_head(source: Source, ref: str = "") -> str:
         for pattern in ([name, name + "^{}"] if name.startswith("refs/tags/") else [name])
     ]
     output = git(["ls-remote", "--", source.url, *patterns]).stdout.decode().splitlines()
-    result = {name: sha for sha, name in (line.split("\t", 1) for line in output) if oid.fullmatch(sha)}
+    result = {name: sha for sha, name in (line.split("\t", 1) for line in output) if OID.fullmatch(sha)}
     matches = [result.get(name + "^{}", result.get(name, "")) for name in names if name in result]
     if len(matches) != 1:
         raise MaintenanceError("上游分支或标签无法唯一确定，请核对安装记录", 409)
     return matches[0]
+
+
+@dataclass(frozen=True)
+class InstallSource:
+    source: Source
+    ref: str = ""      # Named revision to track after installation.
+    commit: str = ""   # Revision resolved while reading the link.
+    directory: str | None = None  # None means an exact document, "" means the whole repository.
+
+
+def _github_revision(source: Source, tail: str) -> tuple[str, str, str]:
+    """A browser URL has no delimiter between a slash-containing branch and its directory."""
+    first, _, rest = tail.partition("/")
+    if OID.fullmatch(first):
+        return first, first, rest
+    if first == "HEAD":
+        return "", "", rest
+    lines = git(["ls-remote", "--heads", "--tags", "--", source.url]).stdout.decode().splitlines()
+    refs = {name: sha for sha, name in (line.split("\t", 1) for line in lines) if OID.fullmatch(sha)}
+    prefix = tail
+    while prefix:
+        for name in ("refs/heads/" + prefix, "refs/tags/" + prefix):
+            if name in refs and not prefix.endswith("^{}"):
+                return name, refs.get(name + "^{}", refs[name]), tail[len(prefix):].lstrip("/")
+        prefix = prefix.rpartition("/")[0]
+    raise MaintenanceError("找不到链接中的分支或标签。请复制 GitHub 上仍可打开的链接。", 404)
+
+
+def install_source(url: str, path: str = "") -> InstallSource:
+    url = url.strip()
+    path = path.strip()
+    try:
+        page = urlsplit(url)
+    except ValueError as error:
+        raise MaintenanceError("仓库地址无效") from error
+    if page.scheme != "https" or page.hostname != "github.com":
+        return InstallSource(Source.parse(url, path or "SKILL.md"), directory=None if path else "")
+
+    parts = page.path.strip("/").split("/")
+    base = page._replace(path="/" + "/".join(parts[:2]), query="", fragment="").geturl()
+    source = Source.parse(base, path or "SKILL.md")
+    if len(parts) == 2:
+        return InstallSource(source, directory=None if path else "")
+    if len(parts) < 4 or parts[2] not in {"tree", "blob"}:
+        raise MaintenanceError("请复制 GitHub 仓库首页、目录或 SKILL.md 文件的链接")
+    tail = relative_path(unquote("/".join(parts[3:])))
+    ref, commit, location = _github_revision(source, tail)
+    if parts[2] == "blob":
+        if PurePosixPath(location).name != "SKILL.md":
+            raise MaintenanceError("此链接指向其他文件。请复制所在目录或 SKILL.md 的链接。")
+        if path and path != location:
+            raise MaintenanceError("所选技能与文件链接不一致")
+        return InstallSource(replace(source, path=location), ref, commit)
+    if path and location and not path.startswith(location + "/"):
+        raise MaintenanceError("所选技能不在链接指定的目录中")
+    return InstallSource(source, ref, commit, None if path else location)
 
 
 def object_store(source: Source, head: str) -> Path:
@@ -168,8 +224,11 @@ def object_store(source: Source, head: str) -> Path:
     return slot
 
 
-def _paths(slot: Path, head: str) -> list[str]:
-    output = git(["ls-tree", "-rz", "--name-only", head], slot).stdout
+def _paths(slot: Path, head: str, directory: str) -> list[str]:
+    args = ["--literal-pathspecs", "ls-tree", "-rz", "--name-only", head]
+    if directory:
+        args.extend(["--", directory + "/"])
+    output = git(args, slot).stdout
     try:
         return [name.decode() for name in output.split(b"\0") if name and name.split(b"/")[-1] == b"SKILL.md"]
     except UnicodeDecodeError as error:
@@ -268,17 +327,20 @@ def legacy_cli_hash(directory: Path, files: dict) -> str:
     return value.hexdigest()
 
 
-def materialize(source: Source, destination: Path, ref: str = "", *, discover: bool = False) -> tuple[Source, str, str]:
-    head = remote_head(source, ref)
+def materialize(request: InstallSource, destination: Path) -> tuple[Source, str, str]:
+    source = request.source
+    head = remote_head(source, request.commit or request.ref)
     slot = object_store(source, head)
-    if discover or git(["cat-file", "-e", head + ":" + source.path], slot, check=False).returncode:
-        paths = _paths(slot, head)
-        if (discover or source.path == "SKILL.md") and len(paths) == 1:
-            source = replace(source, path=relative_path(paths[0]))
-        elif paths:
+    if request.directory is not None:
+        paths = _paths(slot, head, request.directory)
+        if not paths:
+            location = "此目录" if request.directory else "仓库"
+            raise MaintenanceError(f"{location}中没有找到 SKILL.md，请核对链接。", 404)
+        if len(paths) > 1:
             raise SkillChoices(paths)
-        else:
-            raise MaintenanceError("仓库中没有找到 SKILL.md", 404)
+        source = replace(source, path=relative_path(paths[0]))
+    elif git(["cat-file", "-e", head + ":" + source.path], slot, check=False).returncode:
+        raise MaintenanceError("此版本中找不到指定的 SKILL.md，请重新选择技能。", 404)
     folder = source.path.rpartition("/")[0]
     tree = head + ":" + folder if folder else head
     listing = git(["ls-tree", "-rlz", tree], slot).stdout

@@ -43,10 +43,12 @@ export function MaintenancePreview({ plan, onClose, onApplied }: {
     onCancel={e => { e.preventDefault(); if (!busy) onClose(); }}>
     <header><h2 id={title}>{current ? '已是最新' : recordOnly ? '更新安装记录' : actionLabel[plan.action] + '预览'}</h2>
       <button type="button" className="link-button" disabled={busy} onClick={onClose}>关闭</button></header>
-    <dl><dt>选中的安装位置</dt><dd><code>{plan.target}</code></dd>
+    <dl>{plan.action === 'install' && <><dt>技能名称</dt><dd><strong>{plan.target.split('/').pop()}</strong></dd></>}
+      <dt>选中的安装位置</dt><dd><code>{plan.target}</code></dd>
       {plan.backup && <><dt>原副本备份到</dt><dd><code>{plan.backup}</code></dd></>}
       {plan.linkTarget && <><dt>{plan.dangling ? '已失效的目标' : '保留的源目录'}</dt><dd><code>{plan.linkTarget}</code></dd></>}
       {plan.source && <><dt>来源</dt><dd>{plan.source.host}/{plan.source.repo}<br /><code>{plan.source.path}</code></dd>
+        {plan.ref && plan.ref !== plan.commit && <><dt>分支或标签</dt><dd><code>{plan.ref.replace(/^refs\/(heads|tags)\//, '')}</code></dd></>}
         <dt>{current ? '当前提交' : '上游提交'}</dt><dd><code>{plan.commit}</code></dd>
         <dt>包内容</dt><dd>{plan.files} 个文件 · {formatBytes(plan.bytes)} · 许可证 {plan.license || '未声明'}</dd></>}
     </dl>

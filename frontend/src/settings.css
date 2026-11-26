@@ -1,0 +1,88 @@
+.settings-content { max-width: 980px; margin: 0 auto; }
+.settings-page .page-head { padding: 0; margin: 2px 0 20px; border: 0; }
+.settings-page .page-title { font-size: 25px; }
+
+.repository-install, .settings-panels > .block, .settings-diagnostics {
+  min-width: 0; margin: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--surface);
+}
+.repository-install { padding: 22px 26px; border-color: var(--line-strong); border-top: 3px solid var(--accent); }
+.repository-install h2 { margin: 0; font-size: 21px; line-height: 1.4; }
+#install-help { margin: 5px 0 18px; color: var(--ink-2); }
+.repository-install form > label { display: block; margin-bottom: 5px; font-weight: 600; }
+.repository-entry { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+.repository-entry input, .install-choices input, .install-destination select {
+  min-width: 0; max-width: 100%; border: 1px solid var(--line-strong); border-radius: var(--radius);
+  background: var(--surface); color: var(--ink); font: inherit;
+}
+.repository-entry input { width: 100%; min-height: 44px; padding: 9px 12px; font: 14px var(--mono); }
+.button.repository-submit {
+  min-height: 44px; padding: 0 24px; border: 1px solid var(--accent); background: var(--accent);
+  color: var(--surface); font-size: 14px; font-weight: 650;
+}
+.button.repository-submit:hover:enabled { filter: brightness(.92); }
+.button.repository-submit[aria-expanded='true'] { background: var(--surface-2); color: var(--accent); }
+.button.repository-submit:active:enabled { transform: translateY(1px); }
+.install-destination { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; color: var(--ink-3); font-size: 12px; }
+.install-destination strong { color: var(--ink-2); font-weight: 500; }
+.install-destination select { padding: 4px 7px; font-size: 12px; }
+.install-status, .install-error { margin: 14px 0 0; padding: 9px 12px; border-radius: var(--radius); overflow-wrap: anywhere; }
+.install-status { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; background: var(--accent-soft); }
+.install-status a, .repository-install p a { text-decoration: underline; text-underline-offset: 2px; }
+.install-error { color: var(--danger); background: var(--danger-soft); }
+.install-choices { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 14px; }
+.install-choices h3 { margin: 0 0 10px; font-size: 14px; }
+.install-choices input { padding: 7px 10px; width: 100%; margin-bottom: 8px; }
+.install-choices ul { display: grid; gap: 6px; max-height: 19rem; margin: 0; padding: 2px; overflow-y: auto; list-style: none; }
+.install-choice {
+  width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 48px;
+  padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--surface); color: var(--ink); text-align: start; font: inherit; cursor: pointer;
+}
+.install-choice:hover:enabled, .install-choice:focus-visible { border-color: var(--accent); background: var(--accent-soft); }
+.install-choice:disabled { cursor: wait; }
+.install-choice code { display: block; margin-top: 2px; font: 12px var(--mono); color: var(--ink-3); overflow-wrap: anywhere; }
+.install-choice > span:last-child { color: var(--accent); font-size: 20px; }
+
+.settings-panels { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 16px 0; }
+.settings-panels > .block { padding: 20px 22px; }
+.settings-panels .block-title { margin: 0; color: var(--ink); font-size: 16px; letter-spacing: 0; }
+.settings-panels .block-note { margin: 4px 0 12px; font-size: 13px; }
+.settings-panels .settings-form { width: 100%; gap: 12px; }
+.settings-panels .settings-form > p { margin-bottom: 0; }
+.settings-panels .settings-form label { gap: 5px; }
+.settings-panels .settings-form input:not([type='checkbox']) { width: 100%; min-width: 0; min-height: 38px; }
+.settings-panels .button, .settings-diagnostics .button { padding: 7px 12px; font-size: 13px; }
+.settings-panels .project-paths { margin: 0; }
+.settings-panels .project-paths li { margin-bottom: 10px; }
+.settings-diagnostics summary {
+  display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; padding: 16px 22px;
+  border-radius: 12px; list-style: none; cursor: pointer;
+}
+.settings-diagnostics summary::-webkit-details-marker { display: none; }
+.settings-diagnostics summary::after {
+  content: ''; width: 7px; height: 7px; margin: -3px 3px 0 5px; border: solid var(--ink-2);
+  border-width: 0 1.5px 1.5px 0; transform: rotate(45deg);
+}
+.settings-diagnostics[open] summary::after { margin-top: 3px; transform: rotate(225deg); }
+.settings-diagnostics summary:hover { background: var(--surface-2); }
+.settings-diagnostics summary:focus-visible { outline: 2px solid var(--accent); }
+.settings-diagnostics summary span { font-size: 15px; font-weight: 600; }
+.settings-diagnostics summary small { font-size: 12px; color: var(--ink-3); }
+.diagnostics-body { padding: 0 22px; }
+.diagnostics-body section { padding: 14px 0; border-top: 1px solid var(--line); overflow-x: auto; }
+.diagnostics-body h3 { margin: 0 0 8px; font-size: 14px; }
+.diagnostics-body .table { margin-top: 8px; }
+
+@media (max-width: 740px) {
+  .settings-panels { grid-template-columns: minmax(0, 1fr); gap: 12px; margin: 12px 0; }
+  .repository-install, .settings-panels > .block { padding: 18px; }
+}
+@media (max-width: 520px) {
+  .settings-page .page-head { margin-bottom: 14px; }
+  .repository-entry { grid-template-columns: minmax(0, 1fr); }
+  .repository-entry input { font-size: 16px; }
+  .settings-diagnostics summary { grid-template-columns: 1fr auto; gap: 2px 8px; padding: 14px 18px; }
+  .settings-diagnostics summary small { grid-column: 1; }
+  .settings-diagnostics summary::after { grid-area: 1 / 2 / 3 / 3; }
+  .diagnostics-body { padding: 0 18px; }
+}

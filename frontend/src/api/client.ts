@@ -91,9 +91,9 @@ export async function getJson<T>(path: string, signal?: AbortSignal, options?: R
   return (await response.json()) as T;
 }
 
-export async function writeJson<T>(path: string, method: string, body?: unknown, revision?: number): Promise<T> {
-  const { token } = await getJson<{ token: string }>('/api/session');
+export async function writeJson<T>(path: string, method: string, body?: unknown, revision?: number, signal?: AbortSignal): Promise<T> {
+  const { token } = await getJson<{ token: string }>('/api/session', signal);
   const headers: Record<string, string> = { 'X-Skilldesk-Token': token, 'Content-Type': 'application/json' };
   if (revision !== undefined) headers['If-Match'] = String(revision);
-  return getJson<T>(path, undefined, { method, headers, body: JSON.stringify(body) });
+  return getJson<T>(path, signal, { method, headers, body: JSON.stringify(body) });
 }

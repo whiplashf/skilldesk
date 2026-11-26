@@ -354,6 +354,76 @@ def test_managed_source_validation_and_multiskill_selection(remote, client, fake
     assert post(client, "confirm", id="wrong", target=str(root)).status_code == 422
 
 
+def test_branch_home_finds_single_nested_document_and_tracks_that_branch(remote, client, fake_home):
+    root = fake_home / ".agents/skills"
+    git(remote, "checkout", "-qb", "release/preview")
+    git(remote, "rm", "-qr", "skills")
+    doc = remote / "agent_reach/skill/SKILL.md"
+    doc.parent.mkdir(parents=True)
+    doc.write_text("---\nname: agent-reach\nlicense: MIT\n---\n# Agent Reach\n")
+    selected = commit(remote)
+    git(remote, "checkout", "-")
+    (remote / "unrelated").write_text("on the default branch")
+    commit(remote)
+    url = "https://github.com/test/collection/tree/release/preview"
+    plan = good(post(client, "install-preview", repository=url, root=str(root)))
+    assert plan["commit"] == selected and plan["source"]["path"] == "agent_reach/skill/SKILL.md"
+    assert Path(plan["target"]) == root / "agent-reach" and not Path(plan["target"]).exists()
+    good(post(client, "confirm", id=plan["id"]))
+    assert read_json(lock_path(root), {})["skills"]["agent-reach"]["ref"] == "refs/heads/release/preview"
+    git(remote, "checkout", "release/preview")
+    doc.write_text(doc.read_text() + "Next release")
+    advanced = commit(remote)
+    git(remote, "checkout", "-")
+    key = "src:github.com/test/collection@agent_reach/skill/SKILL.md"
+    update = good(change(client, root / "agent-reach", "update", key))
+    assert update["commit"] == advanced and update["changes"]["changed"] == ["SKILL.md"]
+
+
+def test_tree_and_blob_links_respect_scope_and_tag(remote, client, fake_home):
+    root = str(fake_home / ".agents/skills")
+    base = "https://github.com/test/collection/"
+    git(remote, "branch", "-M", "main")
+    doc = remote / "skills/设计 示例/SKILL.md"
+    doc.parent.mkdir()
+    doc.write_text("---\nname: design-demo\n---\n# Design")
+    pinned = commit(remote)
+    git(remote, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "tag", "-am", "v1", "v1")
+    (remote / ALPHA).write_text("Changes after tag")
+    commit(remote)
+
+    def preview(link, path=""):
+        return post(client, "install-preview", repository=base + link, path=path, root=root)
+
+    choices = preview("tree/main/skills").json()["candidates"]
+    assert set(choices) == {ALPHA, "skills/beta/SKILL.md", "skills/设计 示例/SKILL.md"}
+    assert good(preview("tree/main/skills", ALPHA))["source"]["path"] == ALPHA
+    assert good(preview("tree/main/skills/beta"))["source"]["path"] == "skills/beta/SKILL.md"
+    encoded_doc = "skills/%E8%AE%BE%E8%AE%A1%20%E7%A4%BA%E4%BE%8B/SKILL.md"
+    blob = good(preview("blob/v1/" + encoded_doc + "?plain=1#L2"))
+    assert blob["commit"] == pinned and blob["ref"] == "refs/tags/v1"
+    assert blob["source"]["path"] == "skills/设计 示例/SKILL.md" and blob["target"].endswith("/design-demo")
+    assert good(preview("blob/" + pinned + "/" + ALPHA))["ref"] == pinned
+    for link in ("tree/main/missing", "blob/main/missing/SKILL.md", "tree/unknown-branch"):
+        failed = preview(link)
+        assert failed.status_code == 404 and not failed.json().get("candidates")
+    for link in ("blob/main/skills/alpha/check.sh", "tree/main/%2e%2e/secrets", "issues/1"):
+        assert preview(link).status_code == 400
+    assert preview("tree/main/skills/beta", ALPHA).status_code == 400
+    assert preview("blob/main/skills/beta/SKILL.md", ALPHA).status_code == 400
+
+
+def test_empty_repository_and_unsafe_declared_skill_name(remote, client, fake_home):
+    root = fake_home / ".agents/skills"
+    (remote / ALPHA).write_text("---\nname: ../../outside\n---\n# Skill")
+    commit(remote)
+    assert good(post(client, "install-preview", repository=REPO, path=ALPHA, root=str(root)))["target"] == str(root / "alpha")
+    git(remote, "rm", "-qr", "skills")
+    commit(remote)
+    empty = post(client, "install-preview", repository=REPO, root=str(root))
+    assert empty.status_code == 404 and "没有找到 SKILL.md" in empty.json()["detail"]
+
+
 def test_reject_outside_links_and_symlinked_store(remote, client, fake_home, tmp_path, monkeypatch):
     (remote / "skills/alpha/external").symlink_to("../beta/SKILL.md")
     commit(remote)
