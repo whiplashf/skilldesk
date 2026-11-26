@@ -2,6 +2,7 @@ import { getJson, withQuery, writeJson } from './client';
 import type { AISettings, AssetChanges, PromptText, SavedPrompt, SkillSummary, UpstreamQuota, VersionStatus } from './types';
 import type {
   Facets,
+  LibraryUpdateReport,
   MaintenancePreview,
   MaintenanceResult,
   PlacementAction,
@@ -32,7 +33,6 @@ export interface SkillQuery {
 }
 
 export const PAGE_SIZE = 50;
-export const VERSION_BATCH_LIMIT = 50;
 
 /** `identity_key` contains `:`, `/` and `@`, so it is always percent-encoded as one segment. */
 function skillPath(identityKey: string): string {
@@ -63,8 +63,9 @@ export const api = {
   translate: (key: string) => writeJson<{ html: string; cached: boolean }>('/api/ai/translate', 'POST', { identity_key: key }),
   classify: () => writeJson<{ classified: number; remaining: number }>('/api/ai/classify', 'POST'),
   checkVersion: (key: string) => writeJson<VersionStatus>('/api/check', 'POST', { identity_key: key, force: true }),
-  checkBatch: (keys: string[]) =>
-    writeJson<{ items: { key: string; error?: string; status?: number }[] }>('/api/check-batch', 'POST', { keys }),
+  checkAll: (signal: AbortSignal) =>
+    writeJson<LibraryUpdateReport>('/api/check-all', 'POST', undefined, undefined, signal),
+  globalCheckStatus: (signal: AbortSignal) => getJson<LibraryUpdateReport | null>('/api/check-all', signal),
   aiSettings: (signal: AbortSignal) => getJson<AISettings>('/api/settings/ai', signal),
   upstreamQuota: (signal: AbortSignal) => getJson<UpstreamQuota>('/api/upstream/quota', signal),
   saveAI: (body: {baseUrl: string; model: string; apiKey?: string}) => writeJson<AISettings>('/api/settings/ai', 'PUT', body),

@@ -28,6 +28,18 @@ export interface VersionStatus {
   url: string;
   detail: string;
 }
+export interface CheckedSkill { key: string; name: string; repo: string; path: string }
+export interface LibraryUpdateReport {
+  running: boolean;
+  finishedAt: number;
+  total: number | null;
+  untracked: number;
+  checked: number;
+  uncertain: number;
+  updates: (CheckedSkill & { status: 'release' | 'changed'; latest: string })[];
+  failures: (CheckedSkill & { detail: string })[];
+  error: string;
+}
 export interface UpstreamQuota {
   available: boolean;
   mode: 'token' | 'anonymous';

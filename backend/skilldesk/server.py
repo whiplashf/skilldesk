@@ -18,7 +18,7 @@ from typing import Any, Literal
 from urllib.parse import quote
 
 import httpx
-from fastapi import FastAPI, Header, HTTPException, Query, Request
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, NonNegativeInt, TypeAdapter, ValidationError
@@ -32,6 +32,7 @@ from .identity import CONFIDENCE_LABEL
 from .markdown import render, split_frontmatter
 from .packages import MaintenanceError, SkillChoices
 from .scan import MAX_SKILL_BYTES, input_stamp, read_body, scan
+from .update_check import LibraryUpdateCheck
 
 RESCAN_THROTTLE_SECONDS = 3.0
 GROUP_PAGES = TypeAdapter(dict[str, NonNegativeInt])
@@ -477,13 +478,11 @@ def create_app(
     def upstream_quota() -> dict:
         return upstream.quota()
 
-    def check_one(action: SkillAction, batch=None):
-        item, annotations = get_installed(action.identity_key)
-        source = upstream.source_for(item, annotations["assets"].get(action.identity_key, {}))
+    def check_source(item, source, force: bool, batch=None):
         if not source or not source["path"]:
             raise HTTPException(400, "请先在来源中确认 GitHub 仓库与 SKILL.md 路径")
         try:
-            return upstream.check(item, source, action.force, batch=batch)
+            return upstream.check(item, source, force, batch=batch)
         except ValueError as error:
             raise HTTPException(400, str(error))
         except upstream.QuotaExhausted as error:
@@ -501,6 +500,36 @@ def create_app(
             raise HTTPException(502, "GitHub 未能返回版本信息，请核对仓库访问权限") from error
         except (httpx.HTTPError, OSError) as error:
             raise HTTPException(502, "检查失败，请稍后重试或检查 GitHub 访问权限及配额") from error
+
+    def check_one(action: SkillAction, batch=None):
+        item, annotations = get_installed(action.identity_key)
+        source = upstream.source_for(item, annotations["assets"].get(action.identity_key, {}))
+        return check_source(item, source, action.force, batch)
+
+    def version_inventory():
+        refresh_if_stale(database)
+        conn = with_conn()
+        try:
+            assets = annotations_for(conn)["assets"]
+            inventory = index_mod.list_skills(conn, limit=-1)["items"]
+            targets = []
+            for item in inventory:
+                source = upstream.source_for(item, assets.get(item["identity_key"], {}))
+                if source and source["path"]:
+                    targets.append((item, source))
+            return targets, len(inventory) - len(targets)
+        finally:
+            conn.close()
+
+    all_versions = LibraryUpdateCheck()
+
+    @app.get("/api/check-all")
+    def global_check_status():
+        return all_versions.snapshot()
+
+    @app.post("/api/check-all", status_code=202)
+    def start_global_check(tasks: BackgroundTasks):
+        return all_versions.start(tasks, version_inventory, check_source)
 
     @app.post("/api/check")
     def check_upstream(action: SkillAction):

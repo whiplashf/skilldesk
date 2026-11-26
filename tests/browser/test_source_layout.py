@@ -1,8 +1,11 @@
 import json
 import re
+import threading
+import time
 
 import pytest
 from playwright.sync_api import expect
+from skilldesk import upstream
 
 
 @pytest.fixture
@@ -73,16 +76,8 @@ def large_sources(fake_home):
 
 
 @pytest.mark.usefixtures("large_sources")
-def test_repository_bookmark_paging_and_batch_check(page):
+def test_repository_bookmark_paging(page):
     tab, _ = page
-    batches = []
-
-    def checked(route):
-        keys = route.request.post_data_json["keys"]
-        batches.append(keys)
-        route.fulfill(json={"items": [{"key": key} for key in keys]})
-
-    tab.route("**/api/check-batch", checked)
     tab.goto("/#/library?view=github&layout=repository&repo=github.com%2Fteam%2Fleft&page=2", wait_until="networkidle")
     expect(tab.locator(".row-name")).to_have_text(["left-50", "left-51"])
     opposite = tab.get_by_role("button", name="team/right")
@@ -90,9 +85,6 @@ def test_repository_bookmark_paging_and_batch_check(page):
     expect(tab.locator(".row-name")).to_have_count(5)
     tab.get_by_role("button", name="上一页").click()
     expect(tab.locator(".row-name")).to_have_count(53)
-    tab.get_by_role("button", name="检查已展开项的版本").click()
-    expect(tab.get_by_text("已检查 53 项", exact=True)).to_be_visible()
-    assert [len(batch) for batch in batches] == [50, 3]
     tab.get_by_role("button", name="下一页").click()
     tab.get_by_role("button", name=re.compile("^left-51")).click()
     switch = tab.get_by_role("switch", name="按来源分组")
@@ -110,3 +102,70 @@ def test_repository_bookmark_paging_and_batch_check(page):
     source.click()
     expect(tab.locator(".pager-state")).to_have_text("第 2 / 2 页")
     expect(tab.locator(".row-name")).to_have_count(5)
+
+
+@pytest.mark.usefixtures("large_sources")
+@pytest.mark.parametrize(("width", "query", "visible"), [
+    (1280, "view=github&layout=repository&repo=github.com%2Fteam%2Fleft&page=2", 2),
+    (390, "view=favorites&q=missing&agent=codex&category=other", 0),
+])
+def test_global_updates_include_hidden_skills_and_preserve_library_position(page, monkeypatch, width, query, visible):
+    calls = []
+
+    def check(item, source, force, *, batch):
+        calls.append(item["name"])
+        status = {"left-01": "changed", "right-00": "release"}.get(item["name"], "current")
+        return {"status": status, "latest": "v2.0" if status == "release" else ""}
+
+    monkeypatch.setattr(upstream, "check", check)
+    tab, _ = page
+    tab.set_viewport_size({"width": width, "height": 844})
+    tab.goto("/#/library?" + query, wait_until="networkidle")
+    expect(tab.locator(".row-name")).to_have_count(visible)
+    assert calls == []
+    tab.get_by_role("button", name="检查全部更新").click()
+    panel = tab.get_by_role("region", name="全库版本检查")
+    expect(panel.get_by_role("heading", name="2 个技能有更新")).to_be_visible()
+    expect(panel).to_contain_text("已检查 55 / 55 项")
+    expect(panel).to_contain_text("1 个技能缺少可检查的 GitHub 来源")
+    expect(panel.get_by_role("link", name=re.compile("^left-01"))).to_contain_text("内容有变化")
+    expect(panel.get_by_role("link", name=re.compile("^right-00"))).to_contain_text("有新版本")
+    assert len(calls) == len(set(calls)) == 55
+    assert tab.url.endswith(query) and tab.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    tab.reload(wait_until="networkidle")
+    tab.get_by_role("button", name="查看全库检查结果").click()
+    panel.get_by_role("link", name=re.compile("^right-00")).click()
+    expect(tab.locator(".reader-heading h1")).to_have_text("right-00")
+    assert query in tab.url and len(calls) == 55
+
+
+@pytest.mark.usefixtures("two_sources")
+def test_global_check_keeps_running_while_browsing_and_reports_quota(page, monkeypatch):
+    resume = threading.Event()
+    calls = []
+
+    def check(item, source, force, *, batch):
+        calls.append(item["name"])
+        if len(calls) == 1:
+            assert resume.wait(15)
+            return {"status": "changed", "latest": ""}
+        raise upstream.QuotaExhausted(int(time.time()) + 300)
+
+    monkeypatch.setattr(upstream, "check", check)
+    tab, _ = page
+    tab.goto("/#/library")
+    tab.get_by_role("button", name="检查全部更新").click()
+    panel = tab.get_by_role("region", name="全库版本检查")
+    try:
+        expect(panel.get_by_role("heading", name="正在检查全库…")).to_be_visible()
+        tab.get_by_role("link", name="设置", exact=True).click()
+        tab.get_by_role("link", name="本机技能库", exact=True).click()
+        tab.get_by_role("button", name="查看全库检查结果").click()
+    finally:
+        resume.set()
+    expect(panel.get_by_role("heading", name="1 个技能有更新")).to_be_visible()
+    expect(panel.get_by_role("alert")).to_contain_text("额度已用完")
+    expect(panel).to_contain_text("1 项失败 · 4 项尚未检查")
+    panel.locator("summary").click()
+    expect(panel.get_by_role("link", name=calls[1], exact=True)).to_be_visible()
+    assert len(calls) == 2

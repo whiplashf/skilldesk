@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, PAGE_SIZE, VERSION_BATCH_LIMIT } from '../api/endpoints';
+import { api, PAGE_SIZE } from '../api/endpoints';
 import { ApiError, describeError } from '../api/client';
 import type { AssetChanges, SkillSummary } from '../api/types';
 import { FileOverlay } from '../components/FileOverlay';
@@ -8,6 +8,7 @@ import { ActionNotice, type Notice } from '../components/ActionNotice';
 import { FacetGroups } from '../components/FilterRail';
 import { SkillList } from '../components/SkillList';
 import { LibraryNavigation, libraryViews } from '../components/LibraryNavigation';
+import { LibraryUpdates } from '../components/LibraryUpdates';
 import { SkillDetail } from '../components/SkillDetail';
 import type { DocumentTarget } from '../components/SkillBody';
 import { isTypingTarget } from '../lib/dom';
@@ -41,7 +42,6 @@ export function LibraryPage({ selectedKey, onOpenSkill, generation, onScanned }:
   const search = useDebounced(filters.q, 180);
   const [epoch, setEpoch] = useState(0);
   const [busy, setBusy] = useState(false);
-  const [checkingPage, setCheckingPage] = useState(false);
   const pending = useRef(false);
   const [notice, setNotice] = useState<Notice>();
   const setMessage = (text: string) => setNotice(text ? { text } : undefined);
@@ -199,31 +199,6 @@ export function LibraryPage({ selectedKey, onOpenSkill, generation, onScanned }:
     finally { pending.current = false; setBusy(false); }
   }
 
-  async function checkPage() {
-    const candidates = items.filter(item => item.upstream?.path);
-    if (!candidates.length || checkingPage) return;
-    setCheckingPage(true);
-    setMessage('正在检查 ' + candidates.length + ' 项的上游版本…');
-    const checked: { error?: string }[] = [];
-    try {
-      for (let start = 0; start < candidates.length; start += VERSION_BATCH_LIMIT) {
-        const batch = candidates.slice(start, start + VERSION_BATCH_LIMIT);
-        const result = await api.checkBatch(batch.map(i => i.identity_key));
-        checked.push(...result.items);
-        if (result.items.length < batch.length || result.items.some(item => item.status === 429)) break;
-      }
-      const errors = checked.filter(i => i.error);
-      const skipped = candidates.length - checked.length;
-      setMessage('已检查 ' + (checked.length - errors.length) + ' 项' +
-        (errors.length ? ' · ' + errors.length + ' 项失败 · ' + errors[0]?.error : '') + (skipped ? ' · ' + skipped + ' 项待检查' : ''));
-    } catch (err) {
-      setNotice({ text: (checked.length ? '已处理 ' + checked.length + ' 项 · ' : '') + describeError(err), error: true });
-    } finally {
-      if (checked.length) refreshData();
-      setCheckingPage(false);
-    }
-  }
-
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (document.querySelector('dialog[open]') || event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
@@ -279,9 +254,7 @@ export function LibraryPage({ selectedKey, onOpenSkill, generation, onScanned }:
           <option value="">全部 Agent</option>
           {(facetData?.agents ?? []).map(a => <option key={a.value} value={a.value}>{hostKindLabel(a.value)}</option>)}
         </select></label>
-        {view === 'github' && items.some(item => item.upstream?.path) &&
-          <button type="button" className="button check-updates" disabled={checkingPage} onClick={() => void checkPage()}>
-            {checkingPage ? '正在检查…' : grouped && groups.length > 1 ? '检查已展开项的版本' : '检查本页版本'}</button>}
+        <LibraryUpdates onChecked={refreshData} />
         <details ref={advanced} className="advanced"><summary>{hasAdvanced ? '已筛选' : '更多筛选'}</summary>
           <div className="facet-popover">{facetData ? <FacetGroups facets={facetData} filters={filters} onToggleFacet={toggle} />
             : <button type="button" className="button" onClick={facets.reload}>重新加载筛选</button>}

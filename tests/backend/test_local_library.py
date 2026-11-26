@@ -236,6 +236,14 @@ def test_manual_and_batch_checks_share_only_this_requests_evidence(fake_home, mo
         assert [row["result"]["status"] for row in result] == ["release", "release"]
         assert calls == {"": 1, "commits/main": 1, "git/trees/head": 1, "releases": 1}
         assert len({row["result"]["checkedAt"] for row in result}) == 1
+        calls.clear()
+        assert client.get("/api/check-all").json() is None
+        assert client.post("/api/check-all").status_code == 403 and not calls
+        assert client.post("/api/check-all", headers=headers).status_code == 202
+        report = client.get("/api/check-all").json()
+        assert report["total"] == report["checked"] == 2 and not report["running"]
+        assert [(r["key"], r["status"]) for r in report["updates"]] == [(k, "release") for k in keys]
+        assert calls == {"": 1, "commits/main": 1, "git/trees/head": 1, "releases": 1}
         releases.clear()
         assert single()["status"] == "changed" and calls["releases"] == 2
         before_failure = client.get("/api/skill/" + keys[0]).json()["versionStatus"]
