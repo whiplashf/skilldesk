@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import type { RepositoryGroup } from '../api/types';
 
 export const libraryViews = [
@@ -9,6 +9,7 @@ export const libraryViews = [
 ] as const;
 
 interface Props {
+  children: ReactNode;
   view: string;
   grouped: boolean;
   repositories: RepositoryGroup[];
@@ -19,7 +20,7 @@ interface Props {
   onRepository: (key: string) => void;
 }
 
-export function LibraryNavigation({ view, grouped, repositories, active, loading, onView, onLayout, onRepository }: Props) {
+export function LibraryNavigation({ children, view, grouped, repositories, active, loading, onView, onLayout, onRepository }: Props) {
   const [expanded, setExpanded] = useState(true);
   const current = repositories.find(repo => repo.key === active);
   return <aside className="library-navigation" aria-label="技能库目录">
@@ -29,6 +30,7 @@ export function LibraryNavigation({ view, grouped, repositories, active, loading
         <i aria-hidden="true" className={'scope-icon icon-' + id} />{label}
       </button>)}
     </div>
+    {children}
     <section className="repository-panel">
       <div className="layout-switch" role="group" aria-label="列表显示方式">
         <button type="button" aria-pressed={grouped} onClick={() => onLayout(true)}>按仓库</button>

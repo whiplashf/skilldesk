@@ -32,7 +32,7 @@ interface Props {
 
 export function SkillDetail({ identityKey, generation, backHref, busy, onSave, onFile, onVersion, onMaintenance }: Props) {
   const detail = useApi(signal => api.skill(identityKey, signal), [identityKey, generation], true);
-  const settings = useApi(api.aiSettings, [], true);
+  const settings = useApi(api.aiSettings, [generation], true);
   const [showFiles, setShowFiles] = useState(false);
   const translateButton = useRef<HTMLButtonElement>(null);
   const active = useRef(false);
@@ -93,6 +93,13 @@ export function SkillDetail({ identityKey, generation, backHref, busy, onSave, o
       <button className="button star-action" type="button" aria-pressed={item.favorite} disabled={busy}
         onClick={() => void onSave(item, { favorite: !item.favorite })}>{item.favorite ? '★ 已收藏' : '☆ 收藏'}</button>
     </header>
+    <details className="reader-category"><summary>功能分类 <strong>{item.category.name}</strong></summary>
+      <label>调整分类 <select value={item.category.manual ? item.category.key : ''} disabled={busy}
+        onChange={e => void onSave(item, { category: e.target.value || null })}>
+        <option value="">跟随 AI 分类</option>
+        {item.categoryOptions.map(option => <option key={option.key} value={option.key}>{option.name}</option>)}
+      </select></label>
+    </details>
     {item.upstream && <section className="reader-section">
       <div className="section-heading"><h2>GitHub 版本{!status && item.upstream.path && <small> · 尚未检查</small>}</h2>
         <button type="button" className="button" disabled={checking || !item.upstream.path} onClick={() => void checkVersion()}>

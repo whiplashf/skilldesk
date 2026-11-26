@@ -15,6 +15,7 @@ import type {
 } from './types';
 
 export interface SkillQuery {
+  category?: string;
   agent?: string;
   view?: string;
   byRepository?: boolean;
@@ -58,6 +59,7 @@ export const api = {
   patch: (item: SkillSummary, changes: AssetChanges) =>
     writeJson<SkillSummary>('/api/assets/' + encodeURIComponent(item.identity_key), 'PATCH', changes, item.libraryRevision),
   translate: (key: string) => writeJson<{ html: string; cached: boolean }>('/api/ai/translate', 'POST', { identity_key: key }),
+  classify: () => writeJson<{ classified: number; remaining: number }>('/api/ai/classify', 'POST'),
   checkVersion: (key: string) => writeJson<VersionStatus>('/api/check', 'POST', { identity_key: key, force: true }),
   checkBatch: (keys: string[]) =>
     writeJson<{ items: { key: string; error?: string }[] }>('/api/check-batch', 'POST', { keys }),
@@ -71,6 +73,7 @@ export const api = {
   index: (query: SkillQuery, signal: AbortSignal): Promise<IndexResponse> =>
     getJson<IndexResponse>(
       withQuery('/api/index', {
+        category: query.category,
         agent: query.agent,
         view: query.view,
         by_repository: query.byRepository,

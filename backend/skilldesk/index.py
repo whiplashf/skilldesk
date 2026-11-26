@@ -11,10 +11,11 @@ import os
 import sqlite3
 import tempfile
 import time
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from . import SCHEMA_VERSION, __version__, library
+from . import SCHEMA_VERSION, __version__, categories, library
 from .config import index_path
 from .health import Issue
 from .scan import ScanResult
@@ -429,6 +430,8 @@ def list_skills(
     agent: str = "",
     view: str = "all",
     assets: dict | None = None,
+    category: str = "",
+    category_index: dict[str, str] | None = None,
     by_repository: bool = False,
     repository: str = "",
     focus: str = "",
@@ -486,8 +489,19 @@ def list_skills(
             params.append(health)
 
     clause = (" WHERE " + " AND ".join(where)) if where else ""
+    category_data = {}
+    if category_index is not None:
+        matches = conn.execute("SELECT s.identity_key FROM skill s JOIN provenance p USING(identity_key)" + clause, params)
+        counts = Counter(category_index[row[0]] for row in matches)
+        category_data = {
+            "categories": categories.directory(counts, category),
+            "pendingCategories": sum(value == categories.PENDING for value in category_index.values()),
+        }
+        if category:
+            clause += (" AND " if where else " WHERE ") + f"s.identity_key IN ({annotated})"
+            params.append(json.dumps([key for key, value in category_index.items() if value == category]))
     if by_repository:
-        return _repository_page(conn, clause, params, annotations, repository, focus, limit, offset)
+        return {**_repository_page(conn, clause, params, annotations, repository, focus, limit, offset), **category_data}
     total = conn.execute(
         "SELECT count(*) FROM skill s LEFT JOIN provenance p ON p.identity_key = s.identity_key" + clause,
         params,
@@ -499,6 +513,7 @@ def list_skills(
     return {
         "items": [_row_to_item(row) for row in rows],
         "total": int(total),
+        **category_data,
         "limit": limit,
         "offset": offset,
     }

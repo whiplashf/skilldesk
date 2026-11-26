@@ -172,7 +172,7 @@ export function SettingsPage({ health, onRetryHealth, section }: SettingsPagePro
 
   return (
     <div className="page">
-      <PageHeader title="设置" sub="管理本机扫描范围和阅读时使用的翻译服务。" />
+      <PageHeader title="设置" sub="管理本机扫描范围，以及功能分类和翻译使用的 AI 服务。" />
 
       <ProjectSettings key={'projects-' + section} focus={section === 'projects'} onChange={() => { setProjectGeneration(n => n + 1); roots.reload(); onRetryHealth(); }} />
       <RepositoryInstall key={'install-' + section} startOpen={section === 'install'} generation={projectGeneration} onChange={() => { roots.reload(); onRetryHealth(); }} />

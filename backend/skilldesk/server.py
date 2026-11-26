@@ -23,7 +23,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import __version__, library, maintenance, placements, prompts, translation, upstream
+from . import __version__, ai, categories, library, maintenance, placements, prompts, translation, upstream
 from . import index as index_mod
 from .config import config_path, index_path, load_config
 from .health import KINDS as HEALTH_KINDS
@@ -68,6 +68,7 @@ class GitHubSource(BaseModel):
 class AssetPatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
     favorite: bool | None = None
+    category: str | None = None
     mine: bool | None = None
     github: GitHubSource | None = None
 
@@ -306,7 +307,7 @@ def create_app(
         finally:
             conn.close()
 
-    def decorate(item, annotations):
+    def decorate(item, annotations, saved_categories=None):
         """Attach the user's side of the story to one indexed skill.
 
         A claim only fills a gap: when the scan has no upstream record, the claim
@@ -314,6 +315,8 @@ def create_app(
         declared upstream always wins over the claim.
         """
         asset = annotations["assets"].get(item["identity_key"], {})
+        key = categories.purpose(item, asset, categories.stored() if saved_categories is None else saved_categories)
+        item["category"] = {"key": key, "name": categories.label(key), "manual": bool(asset.get("category"))}
         source = upstream.source_for(item, asset)
         library.apply_claim(item, library.claim_of(asset))
         item.update(repository=index_mod.repository_for(item["provenance"], asset),
@@ -392,6 +395,8 @@ def create_app(
             if not item:
                 raise HTTPException(404, "本机没有这项 skill")
             changes = patch.model_dump(exclude_unset=True)
+            if changes.get("category") is not None and changes["category"] not in categories.LABELS:
+                raise HTTPException(400, "无法识别的功能分类")
             if changes.get("github"):
                 changes["github"] = upstream.coordinates(changes["github"]["repo"], changes["github"]["path"])
             return decorate(item, library.update(conn, item, changes, if_match))
@@ -430,12 +435,12 @@ def create_app(
 
     @app.get("/api/settings/ai")
     def ai_settings():
-        return translation.public_settings()
+        return ai.public_settings()
 
     @app.put("/api/settings/ai")
     def save_ai(settings: AISettings):
         try:
-            return translation.configure(settings.baseUrl.strip(), settings.model, settings.apiKey)
+            return ai.configure(settings.baseUrl.strip(), settings.model, settings.apiKey)
         except ValueError as error:
             raise HTTPException(400, str(error))
 
@@ -447,10 +452,25 @@ def create_app(
             raise HTTPException(410, "正文已从本机移除")
         try:
             return translation.translate(render(split_frontmatter(body)[1]))
-        except translation.NotConfigured as error:
+        except ai.NotConfigured as error:
             raise HTTPException(501, str(error))
         except (httpx.HTTPError, ValueError, LookupError, TypeError) as error:
             raise HTTPException(502, "翻译失败，请检查服务地址、模型与密钥后重试") from error
+
+    @app.post("/api/ai/classify")
+    def classify():
+        refresh_if_stale(database)
+        conn = with_conn()
+        try:
+            return categories.classify_next(conn, annotations_for(conn)["assets"])
+        except ai.NotConfigured as error:
+            raise HTTPException(501, str(error)) from error
+        except categories.Busy as error:
+            raise HTTPException(409, str(error)) from error
+        except (httpx.HTTPError, ValueError, LookupError, TypeError) as error:
+            raise HTTPException(502, "本批分类失败，请检查 AI 服务后重试。之前完成的分类已保留。") from error
+        finally:
+            conn.close()
 
     @app.get("/api/upstream/quota")
     def upstream_quota() -> dict:
@@ -520,6 +540,7 @@ def create_app(
     @app.get("/api/index")
     def api_index(
         q: str = "",
+        category: str = "",
         agent: str = "",
         view: str = "all",
         by_repository: bool = False,
@@ -535,9 +556,11 @@ def create_app(
         conn = with_conn()
         try:
             annotations = annotations_for(conn)
+            saved = categories.stored()
             result = index_mod.list_skills(
                 conn,
                 q=q, agent=agent, view=view, assets=annotations["assets"],
+                category=category, category_index=categories.inventory(conn, annotations["assets"], saved),
                 by_repository=by_repository, repository=repository, focus=focus,
                 host=host,
                 source=source,
@@ -547,7 +570,7 @@ def create_app(
                 offset=offset,
             )
             for item in result["items"]:
-                decorate(item, annotations)
+                decorate(item, annotations, saved)
             if view == "favorites" and not result["items"]:
                 result["hasFavorites"] = index_mod.has_installed_favorites(conn, annotations["assets"])
             return result
@@ -667,6 +690,7 @@ def create_app(
             raise HTTPException(status_code=410, detail="skill body is gone from disk")
         frontmatter, markdown_body = split_frontmatter(body)
         skill["frontmatter"] = frontmatter
+        skill["categoryOptions"] = [{"key": key, "name": name} for key, name in categories.LABELS.items()]
         skill["html"] = render(markdown_body)
         for placement in skill["placements"]:
             placement["actions"], placement["managementNote"] = placements.inspect(skill, placement)

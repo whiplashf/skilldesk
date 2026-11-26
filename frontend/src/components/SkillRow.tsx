@@ -7,12 +7,13 @@ interface Props {
   selected: boolean;
   busy: boolean;
   grouped: boolean;
+  showCategory: boolean;
   healthLabels: Record<string, string>;
   onOpen: (key: string) => void;
   onFavorite: (item: SkillSummary) => void;
 }
 
-export function SkillRow({ item, index, selected, busy, grouped, healthLabels, onOpen, onFavorite }: Props) {
+export function SkillRow({ item, index, selected, busy, grouped, showCategory, healthLabels, onOpen, onFavorite }: Props) {
   const version = item.versionStatus;
   const status = version ? VERSION_LABELS[version.status] : grouped ? '' : item.mine ? '我写的'
     : item.upstream ? 'GitHub' : item.provenance.sourceLabel || '待确认来源';
@@ -22,7 +23,10 @@ export function SkillRow({ item, index, selected, busy, grouped, healthLabels, o
         onClick={() => onOpen(item.identity_key)}>
         <span className="row-top"><strong className="row-name">{item.name}</strong>{status && <span className="row-status">{status}</span>}</span>
         <span className="row-desc">{item.description || '无描述'}</span>
-        <span className="row-foot">{accessSummary(item.access)}</span>
+        <span className="row-foot">
+          {showCategory && item.category.key !== 'pending' && <span className="row-category">{item.category.name}</span>}
+          {accessSummary(item.access)}
+        </span>
         {item.health.filter(kind => kind !== 'unclaimed_source').map(kind =>
           <span className="row-issue" key={kind}>{healthLabel(kind, healthLabels)}</span>)}
       </button>

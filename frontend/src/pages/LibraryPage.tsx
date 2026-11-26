@@ -3,6 +3,7 @@ import { api, PAGE_SIZE } from '../api/endpoints';
 import { ApiError, describeError } from '../api/client';
 import type { AssetChanges, SkillSummary } from '../api/types';
 import { FileOverlay } from '../components/FileOverlay';
+import { CategoryDirectory } from '../components/CategoryDirectory';
 import { ActionNotice, type Notice } from '../components/ActionNotice';
 import { FacetGroups } from '../components/FilterRail';
 import { SkillList } from '../components/SkillList';
@@ -28,6 +29,7 @@ export function LibraryPage({ selectedKey, onOpenSkill, generation, onScanned }:
   const params = libraryParams();
   const view = params.get('view') || 'all';
   const agent = params.get('agent') || '';
+  const category = params.get('category') || '';
   const layout = params.get('layout');
   const grouped = layout ? layout === 'repository' : view === 'github' || view === 'mine';
   const repository = params.get('repo') || '';
@@ -60,9 +62,9 @@ export function LibraryPage({ selectedKey, onOpenSkill, generation, onScanned }:
   const facets = useApi(signal => api.facets(signal), [generation, epoch], true);
   const focus = grouped ? selectedKey || '' : '';
   const list = useApi(signal => api.index({
-    ...filters, q: search, agent, view, byRepository: grouped, repository: grouped ? repository : '',
+    ...filters, q: search, agent, category, view, byRepository: grouped, repository: grouped ? repository : '',
     focus, limit: PAGE_SIZE, offset: page * PAGE_SIZE,
-  }, signal), [search, agent, view, grouped, repository, focus, filters.host, filters.source,
+  }, signal), [search, agent, category, view, grouped, repository, focus, filters.host, filters.source,
     filters.confidence, filters.health, page, generation, epoch], true);
   const data = list.state.status === 'ready' ? list.state.data : null;
   const groups = data?.repositories ?? [];
@@ -73,7 +75,7 @@ export function LibraryPage({ selectedKey, onOpenSkill, generation, onScanned }:
   const first = list.state.status === 'loading' ? lastPreview.current : items[0]?.identity_key ?? null;
   const preview = selectedKey ?? first;
   const hasAdvanced = Boolean(filters.host || filters.source || filters.confidence || filters.health);
-  const hasFilters = hasActiveFilters(filters) || Boolean(agent);
+  const hasFilters = hasActiveFilters(filters) || Boolean(agent || category);
   const file = files[files.length - 1];
   const refreshData = () => setEpoch(n => n + 1);
 
@@ -108,7 +110,7 @@ export function LibraryPage({ selectedKey, onOpenSkill, generation, onScanned }:
     onOpenSkill(key, position);
   }
   function toggle(axis: FacetAxis, value: string) { change(axis, filters[axis] === value ? '' : value); }
-  function clear() { setMessage(''); updateLibraryParams({ q: '', host: '', source: '', confidence: '', health: '', agent: '', page: '' }); }
+  function clear() { setMessage(''); updateLibraryParams({ q: '', host: '', source: '', confidence: '', health: '', agent: '', category: '', page: '' }); }
   async function save(item: SkillSummary, changes: AssetChanges, reread = false): Promise<boolean> {
     if (pending.current) return false;
     pending.current = true; setBusy(true); setMessage('');
@@ -121,6 +123,11 @@ export function LibraryPage({ selectedKey, onOpenSkill, generation, onScanned }:
         const fresh = await api.skill(item.identity_key);
         if (changes.favorite !== undefined) {
           updated = fresh.favorite === changes.favorite ? fresh : await api.patch(fresh, changes);
+        } else if ('category' in changes) {
+          const oldOverride = current.category.manual ? current.category.key : null;
+          const newOverride = fresh.category.manual ? fresh.category.key : null;
+          if (newOverride !== oldOverride && newOverride !== changes.category) throw err;
+          updated = newOverride === changes.category ? fresh : await api.patch(fresh, changes);
         } else {
           // The revision covers the whole library. An unrelated edit can safely be retried.
           const sameTracking = current.hasTrackingOverride === fresh.hasTrackingOverride
@@ -138,6 +145,9 @@ export function LibraryPage({ selectedKey, onOpenSkill, generation, onScanned }:
             navigate(location);
           }
         } } });
+      } else if ('category' in changes) {
+        setNotice({ text: item.name + ' · ' + updated.category.name, action: { label: '撤销', run: () =>
+          void save(updated, { category: current.category.manual ? current.category.key : null }) } });
       } else setMessage((changes.favorite ? '已收藏 ' : '已保存来源 · ') + item.name);
       if ('mine' in changes || 'github' in changes) onScanned();
       if (selectedKey === item.identity_key && ((view === 'mine' && !updated.mine) || (view === 'github' && updated.mine))) navigate(libraryHref());
@@ -216,7 +226,10 @@ export function LibraryPage({ selectedKey, onOpenSkill, generation, onScanned }:
   return <div className={'library-workspace' + (selectedKey ? ' reading' : '')}>
     <LibraryNavigation view={view} grouped={grouped} active={activeGroup?.key || ''} repositories={groups}
       loading={list.state.status === 'loading'} onView={id => change('view', id === 'all' ? '' : id)}
-      onLayout={changeLayout} onRepository={key => change('repo', key)} />
+      onLayout={changeLayout} onRepository={key => change('repo', key)}>
+      <CategoryDirectory selected={category} groups={data?.categories ?? []} pending={data?.pendingCategories ?? 0}
+        onSelect={key => change('category', key)} onRefresh={refreshData} />
+    </LibraryNavigation>
     <header className="library-tools">
       <div className="library-search-line">
         <div className="search-field">
@@ -242,8 +255,8 @@ export function LibraryPage({ selectedKey, onOpenSkill, generation, onScanned }:
     <div className="library-panes">
       <div className="list-column" ref={listColumn}>
         <SkillList view={view} state={list.state} page={displayedPage} pageSize={PAGE_SIZE} selectedKey={preview} busy={busy}
-          title={activeGroup?.name || libraryViews.find(option => option.id === view)?.label || '全部'}
-          grouped={grouped}
+          title={activeGroup?.name || data?.categories.find(group => group.key === category)?.name || libraryViews.find(option => option.id === view)?.label || '全部'}
+          grouped={grouped} showCategory={!category}
           hasFilters={hasFilters} healthLabels={facetData?.healthLabels ?? {}}
           onFavorite={item => void save(item, { favorite: !item.favorite })} onOpenSkill={openSkill}
           onPageChange={n => updateLibraryParams({ page: n > 0 ? String(n + 1) : '', repo: activeGroup?.key || '' })}

@@ -171,6 +171,8 @@ def update(conn: sqlite3.Connection, skill: dict, changes: dict, revision: int) 
             raise RevisionConflict
         key = skill["identity_key"]
         asset = {**library["assets"].get(key, {}), **changes}
+        if asset.get("category") is None:
+            asset.pop("category", None)
         if (
             asset.get("favorite")
             or asset.get("mine")

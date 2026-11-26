@@ -13,6 +13,7 @@ export interface SkillListProps {
   title: string;
   view: string;
   grouped: boolean;
+  showCategory: boolean;
   state: AsyncState<IndexResponse>;
   page: number;
   pageSize: number;
@@ -31,6 +32,7 @@ export function SkillList({
   title,
   view,
   grouped,
+  showCategory,
   state,
   page,
   pageSize,
@@ -99,6 +101,7 @@ export function SkillList({
                 selected={item.identity_key === selectedKey}
                 busy={busy}
                 grouped={grouped}
+                showCategory={showCategory}
                 onFavorite={onFavorite}
                 healthLabels={healthLabels}
                 onOpen={onOpenSkill}

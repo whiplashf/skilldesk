@@ -42,12 +42,16 @@ export interface AISettings {
   baseUrl: string; model: string; hasKey: boolean; enabled: boolean;
   baseFromEnv: boolean; modelFromEnv: boolean; keyFromEnv: boolean;
 }
-export interface AssetChanges { favorite?: boolean; mine?: boolean; github?: GitHubSource | null }
+export interface AssetChanges { favorite?: boolean; mine?: boolean; github?: GitHubSource | null; category?: string | null }
+
+export interface SkillCategory { key: string; name: string }
+export interface CategoryGroup extends SkillCategory { count: number }
 
 export interface PromptText { title: string; category: string; body: string }
 export interface SavedPrompt extends PromptText { id: string; revision: number; updatedAt: number }
 
 export interface SkillSummary {
+  category: SkillCategory & { manual: boolean };
   repository: Repository;
   access: { agent: string; scope: string }[];
   favorite: boolean;
@@ -125,6 +129,7 @@ export interface Issue {
 }
 
 export interface SkillDetail extends SkillSummary {
+  categoryOptions: SkillCategory[];
   placements: Placement[];
   issues: Issue[];
   frontmatter: Record<string, unknown>;
@@ -180,6 +185,8 @@ export interface RepositoryGroup extends Repository {
 }
 
 export interface IndexResponse {
+  categories: CategoryGroup[];
+  pendingCategories: number;
   hasFavorites?: boolean;
   items: SkillSummary[];
   total: number;
