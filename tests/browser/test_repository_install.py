@@ -153,7 +153,8 @@ def test_read_release_notes_preview_cancel_and_apply_pinned_release(page, reposi
     tree = git("rev-parse", "HEAD:agent_reach/skill")
     (repo / doc).write_text(original + "Unreleased changes.")
     git("commit", "-qam", "Ongoing development")
-    notes = "Adds offline examples.\n" + "Details.\n" * 8 + "<b>Last line</b>"
+    notes = ("### Changes\n\n- Adds [offline examples](https://github.com/example/tools/pull/2).\n"
+             + "- More detail.\n" * 8 + "\n<b>Last line</b> ![asset](./example.png)")
     release_list.append({"tag_name": "v2", "name": "Offline support", "body": notes,
                          "published_at": "2026-04-05T10:20:00Z"})
     responses.update({
@@ -173,7 +174,8 @@ def test_read_release_notes_preview_cancel_and_apply_pinned_release(page, reposi
     expect(detail.get_by_role("link", name="GitHub 原文")).to_have_attribute("href", repository + "/releases/tag/v2")
     detail.get_by_role("button", name="展开完整说明").click()
     expect(detail.locator(".release-body")).to_contain_text("<b>Last line</b>")
-    expect(detail.locator(".release-body b")).to_have_count(0)
+    expect(detail.locator(".release-body b, .release-body img")).to_have_count(0)
+    expect(detail.get_by_role("link", name="offline examples")).to_have_attribute("href", repository + "/pull/2")
     detail.get_by_role("button", name="收起说明").click()
     action = detail.get_by_role("button", name="更新至 v2")
     action.click()

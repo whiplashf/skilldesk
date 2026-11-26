@@ -21,7 +21,7 @@ export interface Provenance {
 
 export interface GitHubSource { repo: string; path: string }
 export interface GitHubRelease {
-  tag: string; title: string; body: string; publishedAt: string; url: string; commit: string;
+  tag: string; title: string; body: string; html?: string; publishedAt: string; url: string; commit: string;
 }
 export interface VersionStatus {
   status: 'release' | 'current' | 'no_release' | 'unknown';

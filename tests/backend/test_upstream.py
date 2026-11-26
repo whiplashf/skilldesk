@@ -83,7 +83,7 @@ def test_published_notes_and_annotated_tag_resolve_to_immutable_commit(skill):
     result = evaluate(skill, get)
     assert result["status"] == "release"
     assert result["release"] == {"tag": "alpha/v2", "title": "New workflow", "body": tag["body"],
-                                 "publishedAt": tag["published_at"], "commit": commit["sha"],
+                                 "publishedAt": tag["published_at"], "commit": commit["sha"], "html": "<p>First line Second line</p>",
                                  "url": "https://github.com/acme/pack/releases/tag/alpha%2Fv2"}
     assert "commits/main" not in calls
 

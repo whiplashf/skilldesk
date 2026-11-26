@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import html
 import re
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 HEAD_RE = re.compile(r"^(#{1,6})\s+(.*)$")
 FENCE_RE = re.compile(r"^(\s*)(`{3,}|~{3,})\s*([\w#+-]*)\s*$")
@@ -39,7 +39,7 @@ def _emphasis(text: str) -> str:
     return re.sub(r"(?<![\w*])\*([^*\n]+)\*(?![\w*])", r"<em>\1</em>", text)
 
 
-def inline(text: str) -> str:
+def inline(text: str, base_url: str = "") -> str:
     parts: list[str] = []
     start = 0
     for match in _INLINE.finditer(text):
@@ -49,7 +49,7 @@ def inline(text: str) -> str:
             parts.append(f"<code>{esc(code)}</code>")
         elif not safe_url(url):
             parts.append(esc(label))
-        elif image:
+        elif image and not base_url:
             alt = html.escape(label, quote=True)
             value = html.escape(url, quote=True)
             if urlsplit(url).scheme.lower() in {"http", "https"}:
@@ -60,7 +60,9 @@ def inline(text: str) -> str:
             else:
                 parts.append(esc(label))
         else:
-            parts.append(f'<a href="{html.escape(url, quote=True)}" target="_blank" rel="noreferrer">{_emphasis(label)}</a>')
+            href = html.escape(urljoin(base_url, url) if base_url else url, quote=True)
+            caption = _emphasis(label or ("查看图片" if image else ""))
+            parts.append(f'<a href="{href}" target="_blank" rel="noreferrer">{caption}</a>')
         start = match.end()
     parts.append(_emphasis(text[start:]))
     return "".join(parts)
@@ -71,7 +73,7 @@ def _cells(line: str) -> list[str]:
     return [cell.strip() for cell in re.split(r"(?<!\\)\|", line)]
 
 
-def render_table(rows: list[str]) -> str:
+def render_table(rows: list[str], base_url: str = "") -> str:
     head = _cells(rows[0])
     aligns = []
     for cell in _cells(rows[1]):
@@ -83,14 +85,14 @@ def render_table(rows: list[str]) -> str:
 
     out = ["<table><thead><tr>"]
     for index, cell in enumerate(head):
-        out.append(f'<th style="text-align:{align(index)}">{inline(cell)}</th>')
+        out.append(f'<th style="text-align:{align(index)}">{inline(cell, base_url)}</th>')
     out.append("</tr></thead><tbody>")
     for row in rows[2:]:
         cells = _cells(row)
         out.append("<tr>")
         for index in range(len(head)):
             value = cells[index] if index < len(cells) else ""
-            out.append(f'<td style="text-align:{align(index)}">{inline(value)}</td>')
+            out.append(f'<td style="text-align:{align(index)}">{inline(value, base_url)}</td>')
         out.append("</tr>")
     out.append("</tbody></table>")
     return "".join(out)
@@ -105,7 +107,7 @@ def strip_indent(line: str, columns: int) -> str | None:
     return " " * (spaces - columns) + line[prefix:] if spaces >= columns else None
 
 
-def render_list(lines: list[str], start: int, depth: int) -> tuple[str, int]:
+def render_list(lines: list[str], start: int, depth: int, base_url: str = "") -> tuple[str, int]:
     first = lines[start].expandtabs(4)
     pattern = OL_RE if OL_RE.match(first) else UL_RE
     marker = pattern.match(first)
@@ -136,11 +138,11 @@ def render_list(lines: list[str], start: int, depth: int) -> tuple[str, int]:
             else:
                 break
             i += 1
-        out.append("<li>" + render("\n".join(body), _depth=depth + 1) + "</li>")
+        out.append("<li>" + render("\n".join(body), base_url=base_url, _depth=depth + 1) + "</li>")
     return "".join(out) + f"</{tag}>", i
 
 
-def render(markdown: str, *, _depth: int = 0) -> str:
+def render(markdown: str, *, base_url: str = "", _depth: int = 0) -> str:
     if _depth >= 48:
         return "<pre>" + esc(markdown) + "</pre>"
     lines = markdown.replace("\r\n", "\n").split("\n")
@@ -183,7 +185,7 @@ def render(markdown: str, *, _depth: int = 0) -> str:
         heading = HEAD_RE.match(line)
         if heading:
             level = len(heading.group(1))
-            out.append(f"<h{level}>{inline(heading.group(2))}</h{level}>")
+            out.append(f"<h{level}>{inline(heading.group(2), base_url)}</h{level}>")
             i += 1
             continue
 
@@ -198,7 +200,7 @@ def render(markdown: str, *, _depth: int = 0) -> str:
             while i < total and lines[i].strip() and "|" in lines[i]:
                 rows.append(lines[i])
                 i += 1
-            out.append(render_table(rows))
+            out.append(render_table(rows, base_url))
             continue
 
         if line.lstrip().startswith(">"):
@@ -206,12 +208,12 @@ def render(markdown: str, *, _depth: int = 0) -> str:
             while i < total and lines[i].lstrip().startswith(">"):
                 buf.append(re.sub(r"^\s*>\s?", "", lines[i]))
                 i += 1
-            out.append(f"<blockquote>{render(chr(10).join(buf), _depth=_depth + 1)}</blockquote>")
+            out.append(f"<blockquote>{render(chr(10).join(buf), base_url=base_url, _depth=_depth + 1)}</blockquote>")
             continue
 
         listed = UL_RE.match(line) or OL_RE.match(line)
         if listed:
-            html_list, i = render_list(lines, i, _depth)
+            html_list, i = render_list(lines, i, _depth, base_url)
             out.append(html_list)
             continue
 
@@ -223,9 +225,9 @@ def render(markdown: str, *, _depth: int = 0) -> str:
             buf.append(current)
             i += 1
         if buf:
-            out.append(f"<p>{inline(' '.join(part.strip() for part in buf))}</p>")
+            out.append(f"<p>{inline(' '.join(part.strip() for part in buf), base_url)}</p>")
         else:
-            out.append(f"<p>{inline(line.strip())}</p>")
+            out.append(f"<p>{inline(line.strip(), base_url)}</p>")
             i += 1
     return "\n".join(out)
 

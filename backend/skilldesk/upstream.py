@@ -15,7 +15,7 @@ import httpx
 
 from .config import cache_dir, config_dir
 from .library import read_json, write_json
-from .markdown import split_frontmatter
+from .markdown import render, split_frontmatter
 from .net import http_client
 from .packages import OID
 from .scan import read_body
@@ -315,7 +315,9 @@ def evaluate(item: dict, source: dict, get, *, fresh: bool = False, snapshot: di
     result["installed"] = local_version or ref[:9]
 
     def verdict(status: str, detail: str) -> dict:
-        return {**result, "latest": release["tag"], "url": release["url"], "release": release,
+        files_url = f"https://github.com/{source['repo']}/blob/{release['commit']}/"
+        notes = {**release, "html": render(release["body"], base_url=files_url)}
+        return {**result, "latest": release["tag"], "url": release["url"], "release": notes,
                 "status": status, "detail": detail}
 
     if ref == release["commit"]:

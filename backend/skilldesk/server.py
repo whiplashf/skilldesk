@@ -590,7 +590,10 @@ def create_app(
         if not pending:
             return next((row[0] for row in outcomes if row[0]["status"] == "unknown"), primary)
         result, _, path = next((row for row in pending if row[1]), pending[0])
-        entries = [entry for status, entry, _ in pending if entry and status["release"] == result["release"]]
+        entries = [
+            entry for status, entry, _ in pending
+            if entry and status["latest"] == result["latest"] and status["release"]["commit"] == result["release"]["commit"]
+        ]
         return {**result, "entries": entries, "checkedEntry": path}
 
     def check_versions(item, source, force, batch=None):
